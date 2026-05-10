@@ -1,0 +1,7 @@
+PORT=8000
+MONGO_URL="mongodb://localhost:27017/DBdemo"
+DATABASE_URI=mongodb+srv://sampahallen_db_user:RXvR22Ey9mikAN7e@cluster0.tnnbmga.mongodb.net/?appName=Cluster0
+
+ACCESS_TOKEN_SECRET=pn6eUlqn8dBphI157w4Jcqs0L4Slxq68oRkf8SrfJK99IllJTGnnrNvMPFh7iYYErWUPtaOFKsSz4z4TzVbEMz
+REFRESH_TOKEN_SECRET=ntN9bMHCFk71VwL6oOQCfDHmvmQgHwal69A9IC9bUJnrIkrZQO37g2oX3tf9B2NVyib34o8e6rkRxbrXUp4Eao
+JWT_ACCESS_EXPIRY=15m
