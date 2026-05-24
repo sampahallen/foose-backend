@@ -1,0 +1,16 @@
+@baseUrl = http://localhost:8000/api
+
+### Featured listings
+GET {{baseUrl}}/search/featured
+
+### Search by text
+GET {{baseUrl}}/search?q=denim&page=1&limit=20
+
+### Filtered search
+GET {{baseUrl}}/search?category=outerwear&type=retail&condition=used&gender=unisex&minPrice=1000&maxPrice=10000&sort=price_asc&page=1&limit=20
+
+### Delivery estimate
+GET {{baseUrl}}/delivery/estimate?region=Greater%20Accra&city=Accra&method=delivery
+
+### Pickup estimate
+GET {{baseUrl}}/delivery/estimate?region=Greater%20Accra&city=Accra&method=pickup

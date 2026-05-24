@@ -59,6 +59,38 @@ const digishopSchema = new Schema(
         default: "",
       },
     },
+    payoutMethod: {
+      type: {
+        type: String,
+        enum: ["mobile_money", "bank_transfer"],
+        default: "mobile_money",
+      },
+      accountName: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      provider: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      accountNumber: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      bankName: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      branch: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+    },
   },
   { timestamps: true },
 );

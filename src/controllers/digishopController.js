@@ -5,6 +5,7 @@ const httpError = require("../utils/httpError");
 const slugify = require("../utils/slugify");
 const { success } = require("../utils/apiResponse");
 const { sendDigiShopWelcomeEmail } = require("../services/emailService");
+const { withCache, invalidate } = require("../utils/cache");
 
 const firstFileUrl = (req, ...fieldNames) => {
   for (const fieldName of fieldNames) {
@@ -14,6 +15,15 @@ const firstFileUrl = (req, ...fieldNames) => {
 
   return undefined;
 };
+
+const payoutMethodFromBody = (body) => ({
+  type: body.payoutMethodType || "mobile_money",
+  accountName: body.payoutAccountName || "",
+  provider: body.payoutProvider || "",
+  accountNumber: body.payoutAccountNumber || "",
+  bankName: body.payoutBankName || "",
+  branch: body.payoutBranch || "",
+});
 
 const makeUniqueSlug = async (shopName) => {
   const base = slugify(shopName) || "digishop";
@@ -41,13 +51,14 @@ exports.createShop = asyncHandler(async (req, res) => {
     shopName: req.body.shopName,
     slug: await makeUniqueSlug(req.body.shopName),
     bio: req.body.bio,
-    logoUrl: firstFileUrl(req, "logo", "logoImage") || req.body.logoUrl,
-    bannerUrl: firstFileUrl(req, "banner", "bannerImage") || req.body.bannerUrl,
+    logoUrl: firstFileUrl(req, "logo", "logoImage"),
+    bannerUrl: firstFileUrl(req, "banner", "bannerImage"),
     category: req.body.category || "both",
     socialLinks: {
       instagram: req.body.instagram || "",
       whatsapp: req.body.whatsapp || "",
     },
+    payoutMethod: payoutMethodFromBody(req.body),
   });
 
   user.hasShop = true;
@@ -78,9 +89,8 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
     if (req.body[field] !== undefined) shop[field] = req.body[field];
   });
 
-  const logoUrl = firstFileUrl(req, "logo", "logoImage") || req.body.logoUrl;
-  const bannerUrl =
-    firstFileUrl(req, "banner", "bannerImage") || req.body.bannerUrl;
+  const logoUrl = firstFileUrl(req, "logo", "logoImage");
+  const bannerUrl = firstFileUrl(req, "banner", "bannerImage");
 
   if (logoUrl) shop.logoUrl = logoUrl;
   if (bannerUrl) shop.bannerUrl = bannerUrl;
@@ -90,16 +100,37 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   if (req.body.whatsapp !== undefined) {
     shop.socialLinks.whatsapp = req.body.whatsapp;
   }
+  [
+    "payoutMethodType",
+    "payoutAccountName",
+    "payoutProvider",
+    "payoutAccountNumber",
+    "payoutBankName",
+    "payoutBranch",
+  ].forEach((field) => {
+    if (req.body[field] !== undefined) {
+      shop.payoutMethod = payoutMethodFromBody({
+        payoutMethodType: req.body.payoutMethodType || shop.payoutMethod?.type,
+        payoutAccountName: req.body.payoutAccountName || shop.payoutMethod?.accountName,
+        payoutProvider: req.body.payoutProvider || shop.payoutMethod?.provider,
+        payoutAccountNumber: req.body.payoutAccountNumber || shop.payoutMethod?.accountNumber,
+        payoutBankName: req.body.payoutBankName || shop.payoutMethod?.bankName,
+        payoutBranch: req.body.payoutBranch || shop.payoutMethod?.branch,
+      });
+    }
+  });
 
   await shop.save();
+  await invalidate(`shop:${shop.slug}`);
 
   return success(res, { shop }, "DigiShop updated");
 });
 
 exports.getShopBySlug = asyncHandler(async (req, res) => {
-  const shop = await DigiShop.findOne({ slug: req.params.slug }).populate(
-    "ownerId",
-    "name username profilePhoto isKycVerified",
+  const shop = await withCache(`shop:${req.params.slug}`, 600, () =>
+    DigiShop.findOne({ slug: req.params.slug })
+      .populate("ownerId", "name username profilePhoto isKycVerified")
+      .lean(),
   );
 
   if (!shop) {

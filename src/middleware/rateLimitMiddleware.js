@@ -1,8 +1,26 @@
 const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
+const { RedisStore } = require("rate-limit-redis");
+const { getRedis } = require("../config/redis");
 
-const authLimiter = rateLimit({
+const redisStore = () => {
+  const redis = getRedis();
+
+  if (!redis?.isOpen) return undefined;
+
+  return new RedisStore({
+    sendCommand: (...args) => redis.sendCommand(args),
+  });
+};
+
+const createLimiter = (options) =>
+  rateLimit({
+    ...options,
+    store: redisStore(),
+  });
+
+const authLimiter = createLimiter({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -11,9 +29,9 @@ const authLimiter = rateLimit({
   },
 });
 
-const generalLimiter = rateLimit({
+const generalLimiter = createLimiter({
   windowMs: 15 * 60 * 1000,
-  limit: 100,
+  limit: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -22,9 +40,9 @@ const generalLimiter = rateLimit({
   },
 });
 
-const kycLimiter = rateLimit({
+const kycLimiter = createLimiter({
   windowMs: 60 * 60 * 1000,
-  limit: 5,
+  limit: 20,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
   standardHeaders: true,
   legacyHeaders: false,

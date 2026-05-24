@@ -58,9 +58,19 @@ const sendDigiShopWelcomeEmail = (user, shop) =>
     text: `${shop.shopName} is now live on ThriftGH.`,
   });
 
+const sendSellerOrderEmail = (seller, order, buyer) =>
+  sendEmail({
+    to: seller.email,
+    subject: "New Foose order needs your action",
+    text: `Order ${order._id} for ${order.items?.[0]?.title || "an item"} was placed by ${
+      buyer.name || buyer.username || buyer.email
+    }. Please process it within 48 hours from your shop dashboard.`,
+  });
+
 module.exports = {
   sendEmail,
   sendKycApprovedEmail,
   sendKycRejectedEmail,
   sendDigiShopWelcomeEmail,
+  sendSellerOrderEmail,
 };

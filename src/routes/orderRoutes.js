@@ -33,6 +33,8 @@ router.post(
               .optional(),
           })
           .optional(),
+        paymentMethod: z.enum(["paystack_mock", "paystack", "cash_on_pickup"]).optional(),
+        mockPayment: z.boolean().optional(),
       }),
       params: z.object({}),
       query: z.object({}),
@@ -40,9 +42,23 @@ router.post(
   ),
   controller.placeOrder,
 );
+router.get("/", auth, controller.getOrdersByIds);
 router.get("/me/buying", auth, controller.getBuyingOrders);
 router.get("/me/selling", auth, hasShop, controller.getSellingOrders);
 router.get("/:id", auth, controller.getOrder);
+router.put(
+  "/:id/process",
+  auth,
+  hasShop,
+  validate(
+    z.object({
+      body: z.object({ note: z.string().optional() }),
+      params: z.object({ id: z.string().min(1) }),
+      query: z.object({}),
+    }),
+  ),
+  controller.processOrder,
+);
 router.put(
   "/:id/shipped",
   auth,
@@ -55,6 +71,19 @@ router.put(
     }),
   ),
   controller.markShipped,
+);
+router.put(
+  "/:id/pickup-ready",
+  auth,
+  hasShop,
+  validate(
+    z.object({
+      body: z.object({ note: z.string().optional() }),
+      params: z.object({ id: z.string().min(1) }),
+      query: z.object({}),
+    }),
+  ),
+  controller.markPickupReady,
 );
 router.put("/:id/confirm-delivery", auth, controller.confirmDelivery);
 router.post(

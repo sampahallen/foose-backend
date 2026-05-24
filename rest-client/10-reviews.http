@@ -1,0 +1,18 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@orderId = paste_delivered_order_id_here
+@shopId = paste_shop_id_here
+
+### Create review for delivered order
+POST {{baseUrl}}/reviews
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "orderId": "{{orderId}}",
+  "rating": 5,
+  "comment": "Great item and smooth delivery."
+}
+
+### Get shop reviews
+GET {{baseUrl}}/reviews/shop/{{shopId}}?page=1&limit=20

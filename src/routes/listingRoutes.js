@@ -15,19 +15,23 @@ const listingBody = z.object({
   brand: z.string().optional(),
   size: z.string().optional(),
   gender: z.enum(["men", "women", "unisex", "kids"]).optional(),
-  condition: z.enum(["new", "used", "bale"]).optional(),
+  condition: z.enum(["new", "used"]).optional(),
   type: z.enum(["retail", "wholesale"]).optional(),
   price: z.coerce.number().int().nonnegative().optional(),
   currency: z.string().optional(),
-  quantity: z.coerce.number().int().nonnegative().optional(),
-  bulkMinQty: z.coerce.number().int().nonnegative().optional(),
+  quantity: z.coerce.number().int().positive().optional(),
+  bulkMinQty: z.coerce.number().int().positive().optional(),
   bulkWeight: z.string().optional(),
+  keptImages: z.any().optional(),
+  keptImagesTouched: z.any().optional(),
   volumeDiscounts: z.any().optional(),
+  promotionTags: z.any().optional(),
   status: z.enum(["active", "sold", "draft", "removed"]).optional(),
-});
+}).strict();
 
 router.get("/", controller.listListings);
 router.get("/shop/:shopId", controller.getShopListings);
+router.get("/me", auth, hasShop, controller.getMyListings);
 router.get("/:id", controller.getListing);
 router.post(
   "/",

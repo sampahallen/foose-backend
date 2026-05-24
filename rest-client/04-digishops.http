@@ -1,0 +1,77 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@shopSlug = ama-thrift
+@logoPath = C:\Users\User\Pictures\shop-logo.jpg
+@bannerPath = C:\Users\User\Pictures\shop-banner.jpg
+
+### Create DigiShop with hosted image URLs
+POST {{baseUrl}}/digishops
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "shopName": "Ama Thrift",
+  "bio": "Curated thrift finds from Accra.",
+  "logoUrl": "https://example.com/logo.jpg",
+  "bannerUrl": "https://example.com/banner.jpg",
+  "category": "both",
+  "instagram": "https://instagram.com/amathrift",
+  "whatsapp": "+233501234567"
+}
+
+### Create DigiShop with image upload
+POST {{baseUrl}}/digishops
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="shopName"
+
+Ama Thrift
+--FormBoundary
+Content-Disposition: form-data; name="bio"
+
+Curated thrift finds from Accra.
+--FormBoundary
+Content-Disposition: form-data; name="category"
+
+both
+--FormBoundary
+Content-Disposition: form-data; name="instagram"
+
+https://instagram.com/amathrift
+--FormBoundary
+Content-Disposition: form-data; name="whatsapp"
+
++233501234567
+--FormBoundary
+Content-Disposition: form-data; name="logo"; filename="shop-logo.jpg"
+Content-Type: image/jpeg
+
+< {{logoPath}}
+--FormBoundary
+Content-Disposition: form-data; name="banner"; filename="shop-banner.jpg"
+Content-Type: image/jpeg
+
+< {{bannerPath}}
+--FormBoundary--
+
+### Get my DigiShop
+GET {{baseUrl}}/digishops/me
+Authorization: Bearer {{accessToken}}
+
+### Update my DigiShop
+PUT {{baseUrl}}/digishops/me
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "shopName": "Ama Thrift",
+  "bio": "Updated bio for curated thrift finds.",
+  "category": "retail",
+  "instagram": "https://instagram.com/amathrift",
+  "whatsapp": "+233501234567"
+}
+
+### Public shop by slug
+GET {{baseUrl}}/digishops/{{shopSlug}}

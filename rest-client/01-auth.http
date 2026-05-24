@@ -1,0 +1,78 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@refreshToken = paste_refresh_token_here
+@emailVerifyToken = paste_email_verify_token_here
+@resetToken = paste_reset_token_here
+
+### Health check
+GET {{baseUrl}}/health
+
+### Register
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Ama Mensah",
+  "email": "ama.mensah@example.com",
+  "username": "ama_mensah",
+  "password": "password123",
+  "phone": "+233501234567",
+  "location": {
+    "region": "Greater Accra",
+    "city": "Accra"
+  }
+}
+
+### Login with identifier
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "ama_mensah",
+  "password": "password123"
+}
+
+### Login with email
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "ama.mensah@example.com",
+  "password": "password123"
+}
+
+### Refresh token
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### Logout
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### Verify email
+GET {{baseUrl}}/auth/verify-email/{{emailVerifyToken}}
+
+### Forgot password
+POST {{baseUrl}}/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "ama.mensah@example.com"
+}
+
+### Reset password
+POST {{baseUrl}}/auth/reset-password/{{resetToken}}
+Content-Type: application/json
+
+{
+  "password": "newpassword123"
+}

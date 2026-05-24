@@ -4,31 +4,33 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 
-const firstFileUrl = (req, ...fieldNames) => {
-  for (const fieldName of fieldNames) {
-    const url = req.fileUrlMap?.[fieldName]?.[0];
-    if (url) return url;
-  }
-
-  return undefined;
+const firstFileUrl = (req, fieldName) => {
+  const url = req.fileUrlMap?.[fieldName]?.[0];
+  return url || undefined;
 };
 
 const submissionPayload = (req, existingKyc) => {
-  const idImgUrl =
-    firstFileUrl(req, "idImg", "idImage") || req.body.idImgUrl || existingKyc?.idImgUrl;
-  const selfieImgUrl =
-    firstFileUrl(req, "selfie", "selfieImage") ||
-    req.body.selfieImgUrl ||
-    existingKyc?.selfieImgUrl;
+  const idImgUrl = firstFileUrl(req, "idImg") || existingKyc?.idImgUrl;
+  const selfieImgUrl = firstFileUrl(req, "selfie") || existingKyc?.selfieImgUrl;
+  const phone = String(req.body.phone || existingKyc?.phone || "").trim();
+  const phoneOtp = String(req.body.phoneOtp || "").trim();
+  const phoneVerified = Boolean(phone && phoneOtp);
 
   if (!idImgUrl || !selfieImgUrl) {
-    throw httpError(422, "ID image and selfie image are required");
+    throw httpError(
+      422,
+      "ID image and selfie are required. Upload both images (JPEG, PNG, or WebP), or when resubmitting after rejection you may omit a file to keep the previous image.",
+    );
   }
 
   return {
     idType: req.body.idType,
     idNo: req.body.idNo,
     dob: req.body.dob,
+    phone,
+    phoneVerified,
+    phoneOtpRequestedAt: phone ? existingKyc?.phoneOtpRequestedAt || new Date() : undefined,
+    phoneOtpVerifiedAt: phoneVerified ? new Date() : existingKyc?.phoneOtpVerifiedAt,
     idImgUrl,
     selfieImgUrl,
     status: "pending",
@@ -64,6 +66,7 @@ exports.submitKyc = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(req.user.id, {
     isKycVerified: false,
     kycId: kyc._id,
+    ...(kyc.phone ? { phone: kyc.phone } : {}),
   });
 
   return success(res, { kyc }, "KYC submitted for review", 201);
@@ -87,6 +90,7 @@ exports.resubmitKyc = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(req.user.id, {
     isKycVerified: false,
     kycId: kyc._id,
+    ...(kyc.phone ? { phone: kyc.phone } : {}),
   });
 
   return success(res, { kyc }, "KYC resubmitted for review");

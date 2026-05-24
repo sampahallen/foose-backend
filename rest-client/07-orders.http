@@ -1,0 +1,60 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@listingId = paste_listing_id_here
+@orderId = paste_order_id_here
+
+### Place order
+POST {{baseUrl}}/orders
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "listingId": "{{listingId}}",
+      "quantity": 1
+    }
+  ],
+  "delivery": {
+    "method": "delivery",
+    "address": {
+      "region": "Greater Accra",
+      "city": "Accra",
+      "street": "12 Market Street"
+    }
+  }
+}
+
+### My buying orders
+GET {{baseUrl}}/orders/me/buying
+Authorization: Bearer {{accessToken}}
+
+### My selling orders
+GET {{baseUrl}}/orders/me/selling
+Authorization: Bearer {{accessToken}}
+
+### Get order
+GET {{baseUrl}}/orders/{{orderId}}
+Authorization: Bearer {{accessToken}}
+
+### Seller marks order as shipped
+PUT {{baseUrl}}/orders/{{orderId}}/shipped
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "trackingInfo": "Sent via courier. Call rider on arrival."
+}
+
+### Buyer confirms delivery
+PUT {{baseUrl}}/orders/{{orderId}}/confirm-delivery
+Authorization: Bearer {{accessToken}}
+
+### Raise dispute
+POST {{baseUrl}}/orders/{{orderId}}/dispute
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reason": "Item was not as described."
+}

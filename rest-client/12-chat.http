@@ -1,0 +1,37 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@conversationId = paste_conversation_id_here
+@receiverId = paste_receiver_user_id_here
+@listingId = paste_listing_id_here
+
+### Send message
+POST {{baseUrl}}/chat
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "receiverId": "{{receiverId}}",
+  "listingId": "{{listingId}}",
+  "content": "Hi, is this still available?",
+  "type": "text"
+}
+
+### Send message in existing conversation
+POST {{baseUrl}}/chat
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "conversationId": "{{conversationId}}",
+  "receiverId": "{{receiverId}}",
+  "content": "Can I pick it up tomorrow?",
+  "type": "text"
+}
+
+### List conversation
+GET {{baseUrl}}/chat/{{conversationId}}
+Authorization: Bearer {{accessToken}}
+
+### Mark conversation read
+PUT {{baseUrl}}/chat/{{conversationId}}/read
+Authorization: Bearer {{accessToken}}

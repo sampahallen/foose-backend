@@ -41,7 +41,7 @@ const listingSchema = new Schema(
     },
     condition: {
       type: String,
-      enum: ["new", "used", "bale"],
+      enum: ["new", "used"],
       index: true,
     },
     type: {
@@ -76,6 +76,15 @@ const listingSchema = new Schema(
       type: [String],
       default: [],
       validate: [(value) => value.length <= 6, "A listing can have max 6 images"],
+    },
+    promotionTags: {
+      type: [String],
+      default: [],
+      index: true,
+      set: (tags) =>
+        (Array.isArray(tags) ? tags : [])
+          .map((tag) => String(tag).trim().toLowerCase())
+          .filter(Boolean),
     },
     status: {
       type: String,

@@ -13,12 +13,15 @@ const {
 const { createNotification } = require("../services/notificationService");
 
 const markOrderPaid = async (order, reference, paymentMethod) => {
-  if (order.status === "paid") return order;
+  if (order.paymentStatus === "paid") return order;
 
   order.status = "paid";
   order.paymentRef = reference;
   order.paymentMethod = paymentMethod || order.paymentMethod;
+  order.paymentStatus = "paid";
+  order.paidAt = new Date();
   order.escrowStatus = "held";
+  order.sellerActionDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000);
   await order.save();
 
   const shop = await DigiShop.findById(order.shopId);

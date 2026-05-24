@@ -1,30 +1,33 @@
 const { S3Client } = require("@aws-sdk/client-s3");
 const { Upload } = require("@aws-sdk/lib-storage");
 
+const envValue = (name) => (process.env[name] || "").trim();
+
 const hasS3Config = () =>
   Boolean(
-    process.env.AWS_ACCESS_KEY_ID &&
-      process.env.AWS_SECRET_ACCESS_KEY &&
-      process.env.AWS_REGION &&
-      process.env.S3_BUCKET_NAME,
+    envValue("AWS_ACCESS_KEY_ID") &&
+      envValue("AWS_SECRET_ACCESS_KEY") &&
+      envValue("AWS_REGION") &&
+      envValue("S3_BUCKET_NAME"),
   );
 
 const s3Client = hasS3Config()
   ? new S3Client({
-      region: process.env.AWS_REGION,
+      region: envValue("AWS_REGION"),
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        accessKeyId: envValue("AWS_ACCESS_KEY_ID"),
+        secretAccessKey: envValue("AWS_SECRET_ACCESS_KEY"),
       },
     })
   : null;
 
 const publicUrlForKey = (key) => {
-  if (process.env.CLOUDFRONT_URL) {
-    return `${process.env.CLOUDFRONT_URL.replace(/\/$/, "")}/${key}`;
+  const cloudfrontUrl = envValue("CLOUDFRONT_URL");
+  if (cloudfrontUrl) {
+    return `${cloudfrontUrl.replace(/\/$/, "")}/${key}`;
   }
 
-  return `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+  return `https://${envValue("S3_BUCKET_NAME")}.s3.${envValue("AWS_REGION")}.amazonaws.com/${key}`;
 };
 
 const uploadBuffer = async ({ buffer, mimetype, key }) => {
@@ -35,10 +38,11 @@ const uploadBuffer = async ({ buffer, mimetype, key }) => {
   const upload = new Upload({
     client: s3Client,
     params: {
-      Bucket: process.env.S3_BUCKET_NAME,
+      Bucket: envValue("S3_BUCKET_NAME"),
       Key: key,
       Body: buffer,
       ContentType: mimetype,
+      ACL: "public-read",
     },
   });
 

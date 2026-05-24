@@ -31,7 +31,7 @@ const registerChatSocket = (io, socket) => {
         type: "chat",
         title: "New message",
         body: payload.content || "You have a new message",
-        link: `/chat/${conversationId}`,
+        link: `/inbox?conversationId=${encodeURIComponent(conversationId)}`,
       });
 
       io.to(payload.receiverId.toString()).emit("new_message", message);

@@ -28,6 +28,15 @@ const eventSchema = new Schema(
       default: "",
     },
     coverImage: String,
+    promotionTags: {
+      type: [String],
+      default: [],
+      index: true,
+      set: (tags) =>
+        (Array.isArray(tags) ? tags : [])
+          .map((tag) => String(tag).trim().toLowerCase())
+          .filter(Boolean),
+    },
     type: {
       type: String,
       enum: ["pop-up", "fair", "online"],

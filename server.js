@@ -1,7 +1,7 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 const http = require("http");
 const mongoose = require("mongoose");
-const app = require("./src/app");
 const connectDB = require("./src/config/db");
 const { connectRedis } = require("./src/config/redis");
 const { initSocket } = require("./src/config/socket");
@@ -12,6 +12,7 @@ const start = async () => {
   await connectDB();
   await connectRedis();
 
+  const app = require("./src/app");
   const httpServer = http.createServer(app);
   initSocket(httpServer);
 

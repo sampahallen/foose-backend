@@ -1,0 +1,97 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@eventId = paste_event_id_here
+@galleryPostId = paste_gallery_post_id_here
+@coverImagePath = C:\Users\User\Pictures\event-cover.jpg
+@galleryImagePath = C:\Users\User\Pictures\fit.jpg
+
+### List upcoming events
+GET {{baseUrl}}/community/events
+
+### Create event with JSON image URL
+POST {{baseUrl}}/community/events
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Accra Thrift Pop-up",
+  "description": "Weekend thrift market with local sellers.",
+  "date": "2026-06-15T10:00:00.000Z",
+  "location": "Osu, Accra",
+  "coverImage": "https://example.com/event-cover.jpg",
+  "type": "pop-up"
+}
+
+### Create event with cover upload
+POST {{baseUrl}}/community/events
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="title"
+
+Accra Thrift Pop-up
+--FormBoundary
+Content-Disposition: form-data; name="description"
+
+Weekend thrift market with local sellers.
+--FormBoundary
+Content-Disposition: form-data; name="date"
+
+2026-06-15T10:00:00.000Z
+--FormBoundary
+Content-Disposition: form-data; name="location"
+
+Osu, Accra
+--FormBoundary
+Content-Disposition: form-data; name="type"
+
+pop-up
+--FormBoundary
+Content-Disposition: form-data; name="coverImage"; filename="event-cover.jpg"
+Content-Type: image/jpeg
+
+< {{coverImagePath}}
+--FormBoundary--
+
+### Attend or unattend event
+POST {{baseUrl}}/community/events/{{eventId}}/attend
+Authorization: Bearer {{accessToken}}
+
+### List gallery
+GET {{baseUrl}}/community/gallery?page=1&limit=20
+
+### Create gallery post with JSON image URL
+POST {{baseUrl}}/community/gallery
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "imageUrl": "https://example.com/fit.jpg",
+  "caption": "Sunday market fit.",
+  "tags": "denim,vintage,accra"
+}
+
+### Create gallery post with image upload
+POST {{baseUrl}}/community/gallery
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="caption"
+
+Sunday market fit.
+--FormBoundary
+Content-Disposition: form-data; name="tags"
+
+denim,vintage,accra
+--FormBoundary
+Content-Disposition: form-data; name="image"; filename="fit.jpg"
+Content-Type: image/jpeg
+
+< {{galleryImagePath}}
+--FormBoundary--
+
+### Like or unlike gallery post
+POST {{baseUrl}}/community/gallery/{{galleryPostId}}/like
+Authorization: Bearer {{accessToken}}

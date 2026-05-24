@@ -1,0 +1,79 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@idImagePath = C:\Users\User\Pictures\ghana-card.jpg
+@selfiePath = C:\Users\User\Pictures\selfie.jpg
+
+### Submit KYC with hosted image URLs
+POST {{baseUrl}}/kyc
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "idType": "Ghana Card",
+  "idNo": "GHA-123456789-0",
+  "dob": "1998-05-12",
+  "idImgUrl": "https://example.com/id.jpg",
+  "selfieImgUrl": "https://example.com/selfie.jpg"
+}
+
+### Submit KYC with image upload
+POST {{baseUrl}}/kyc
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="idType"
+
+Ghana Card
+--FormBoundary
+Content-Disposition: form-data; name="idNo"
+
+GHA-123456789-0
+--FormBoundary
+Content-Disposition: form-data; name="dob"
+
+1998-05-12
+--FormBoundary
+Content-Disposition: form-data; name="idImg"; filename="ghana-card.jpg"
+Content-Type: image/jpeg
+
+< {{idImagePath}}
+--FormBoundary
+Content-Disposition: form-data; name="selfie"; filename="selfie.jpg"
+Content-Type: image/jpeg
+
+< {{selfiePath}}
+--FormBoundary--
+
+### Resubmit KYC after rejection
+PUT {{baseUrl}}/kyc
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="idType"
+
+Passport
+--FormBoundary
+Content-Disposition: form-data; name="idNo"
+
+P1234567
+--FormBoundary
+Content-Disposition: form-data; name="dob"
+
+1998-05-12
+--FormBoundary
+Content-Disposition: form-data; name="idImg"; filename="passport.jpg"
+Content-Type: image/jpeg
+
+< {{idImagePath}}
+--FormBoundary
+Content-Disposition: form-data; name="selfie"; filename="selfie.jpg"
+Content-Type: image/jpeg
+
+< {{selfiePath}}
+--FormBoundary--
+
+### Get my KYC
+GET {{baseUrl}}/kyc/me
+Authorization: Bearer {{accessToken}}

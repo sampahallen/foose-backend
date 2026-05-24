@@ -31,6 +31,16 @@ const orderSchema = new Schema(
       required: true,
       min: 0,
     },
+    subtotalAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    deliveryFee: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     currency: {
       type: String,
       default: "GHS",
@@ -51,13 +61,40 @@ const orderSchema = new Schema(
       index: true,
     },
     paymentRef: String,
-    paymentMethod: String,
+    paymentMethod: {
+      type: String,
+      enum: ["paystack_mock", "paystack", "cash_on_pickup"],
+      default: "paystack_mock",
+    },
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "paid", "cash_on_pickup", "refunded"],
+      default: "unpaid",
+      index: true,
+    },
+    paidAt: Date,
     escrowStatus: {
       type: String,
-      enum: ["held", "released", "refunded"],
+      enum: ["not_held", "held", "released", "refunded"],
       default: "held",
       index: true,
     },
+    sellerAction: {
+      type: String,
+      enum: ["pending", "accepted", "shipped", "pickup_ready"],
+      default: "pending",
+      index: true,
+    },
+    sellerActionAt: Date,
+    sellerActionDeadline: Date,
+    sellerNote: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    autoReleaseAt: Date,
+    releasedAt: Date,
+    buyerConfirmedAt: Date,
     delivery: {
       method: {
         type: String,

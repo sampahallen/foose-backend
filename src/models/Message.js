@@ -26,9 +26,24 @@ const messageSchema = new Schema(
       type: String,
       default: "",
     },
+    attachments: [
+      {
+        url: {
+          type: String,
+          required: true,
+        },
+        type: {
+          type: String,
+          enum: ["image", "video"],
+          required: true,
+        },
+        mimetype: String,
+        originalname: String,
+      },
+    ],
     type: {
       type: String,
-      enum: ["text", "image"],
+      enum: ["text", "image", "video", "mixed"],
       default: "text",
     },
     isRead: {

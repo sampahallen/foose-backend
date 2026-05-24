@@ -5,8 +5,13 @@ const { uploadBuffer } = require("../config/s3");
 const bytes = (mb) => mb * 1024 * 1024;
 
 const allowedImageTypes = ["image/jpeg", "image/png", "image/webp"];
+const allowedVideoTypes = ["video/mp4", "video/webm", "video/quicktime"];
 
 const fileFilter = (allowedTypes) => (req, file, cb) => {
+  if (!file.originalname) {
+    return cb(null, false);
+  }
+
   if (allowedTypes.includes(file.mimetype)) {
     return cb(null, true);
   }
@@ -44,6 +49,7 @@ const uploadToS3 =
 
       req.fileUrls = [];
       req.fileUrlMap = {};
+      req.fileUploads = [];
 
       for (const file of files) {
         const extension = path.extname(file.originalname).toLowerCase() || ".jpg";
@@ -58,6 +64,12 @@ const uploadToS3 =
         });
 
         req.fileUrls.push(url);
+        req.fileUploads.push({
+          fieldname: file.fieldname,
+          mimetype: file.mimetype,
+          originalname: file.originalname,
+          url,
+        });
         req.fileUrlMap[file.fieldname] = req.fileUrlMap[file.fieldname] || [];
         req.fileUrlMap[file.fieldname].push(url);
       }
@@ -73,12 +85,11 @@ const listingImages = [
   uploadToS3("listings"),
 ];
 
+/** KYC: multipart fields `idImg` + `selfie` → memory → S3 `kyc/` → URLs on `req.fileUrlMap` */
 const kycDocuments = [
-  upload(10, ["image/jpeg", "image/png"]).fields([
+  upload(10).fields([
     { name: "idImg", maxCount: 1 },
     { name: "selfie", maxCount: 1 },
-    { name: "idImage", maxCount: 1 },
-    { name: "selfieImage", maxCount: 1 },
   ]),
   uploadToS3("kyc"),
 ];
@@ -98,7 +109,13 @@ const singleImage = (folder, fieldName = "image") => [
   uploadToS3(folder),
 ];
 
+const chatAttachments = [
+  upload(25, [...allowedImageTypes, ...allowedVideoTypes]).array("attachments", 8),
+  uploadToS3("messages"),
+];
+
 module.exports = {
+  chatAttachments,
   listingImages,
   kycDocuments,
   shopImages,

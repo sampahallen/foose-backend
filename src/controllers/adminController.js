@@ -35,7 +35,7 @@ exports.stats = asyncHandler(async (req, res) => {
 
 exports.pendingKyc = asyncHandler(async (req, res) => {
   const records = await KYC.find({ status: "pending" })
-    .populate("userId", "name email username")
+    .populate("userId", "name email username phone")
     .sort({ submittedAt: 1 });
 
   return success(res, { records }, "Pending KYC loaded");
@@ -44,7 +44,7 @@ exports.pendingKyc = asyncHandler(async (req, res) => {
 exports.getKyc = asyncHandler(async (req, res) => {
   const kyc = await KYC.findById(req.params.kycId).populate(
     "userId reviewedBy",
-    "name email username role",
+    "name email username role phone",
   );
 
   if (!kyc) throw httpError(404, "KYC record not found");

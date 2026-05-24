@@ -1,0 +1,19 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@notificationId = paste_notification_id_here
+
+### Get my notifications
+GET {{baseUrl}}/notifications?page=1&limit=20
+Authorization: Bearer {{accessToken}}
+
+### Get unread notifications
+GET {{baseUrl}}/notifications?isRead=false&page=1&limit=20
+Authorization: Bearer {{accessToken}}
+
+### Mark one notification as read
+PUT {{baseUrl}}/notifications/{{notificationId}}/read
+Authorization: Bearer {{accessToken}}
+
+### Mark all notifications as read
+PUT {{baseUrl}}/notifications/read-all
+Authorization: Bearer {{accessToken}}

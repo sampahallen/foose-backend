@@ -1,5 +1,4 @@
 const Notification = require("../models/Notification");
-const { getIO } = require("../config/socket");
 
 const createNotification = async ({ userId, type, title, body, link }) => {
   const notification = await Notification.create({
@@ -10,7 +9,8 @@ const createNotification = async ({ userId, type, title, body, link }) => {
     link,
   });
 
-  const io = getIO();
+  const { getIO } = require("../config/socket");
+  const io = typeof getIO === "function" ? getIO() : null;
   if (io) {
     io.to(userId.toString()).emit("notification", notification);
   }

@@ -1,0 +1,60 @@
+@baseUrl = http://localhost:8000/api
+@adminAccessToken = paste_admin_access_token_here
+@kycId = paste_kyc_id_here
+@listingId = paste_listing_id_here
+@orderId = paste_disputed_order_id_here
+
+### Platform stats
+GET {{baseUrl}}/admin/stats
+Authorization: Bearer {{adminAccessToken}}
+
+### Pending KYC records
+GET {{baseUrl}}/admin/kyc/pending
+Authorization: Bearer {{adminAccessToken}}
+
+### Get KYC record
+GET {{baseUrl}}/admin/kyc/{{kycId}}
+Authorization: Bearer {{adminAccessToken}}
+
+### Approve KYC
+PUT {{baseUrl}}/admin/kyc/{{kycId}}/approve
+Authorization: Bearer {{adminAccessToken}}
+
+### Reject KYC
+PUT {{baseUrl}}/admin/kyc/{{kycId}}/reject
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "reason": "The ID image is unclear. Please upload a sharper photo."
+}
+
+### Flagged listings
+GET {{baseUrl}}/admin/listings/flagged
+Authorization: Bearer {{adminAccessToken}}
+
+### Admin remove listing
+DELETE {{baseUrl}}/admin/listings/{{listingId}}
+Authorization: Bearer {{adminAccessToken}}
+
+### Disputes
+GET {{baseUrl}}/admin/disputes
+Authorization: Bearer {{adminAccessToken}}
+
+### Resolve dispute for seller
+PUT {{baseUrl}}/admin/disputes/{{orderId}}/resolve
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "resolveFor": "seller"
+}
+
+### Resolve dispute for buyer
+PUT {{baseUrl}}/admin/disputes/{{orderId}}/resolve
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "resolveFor": "buyer"
+}

@@ -1,0 +1,49 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@username = ama_mensah
+@profilePhotoPath = C:\Users\User\Pictures\profile.jpg
+
+### Get my profile
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{accessToken}}
+
+### Update my profile with JSON
+PUT {{baseUrl}}/users/me
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Ama Mensah",
+  "phone": "+233501234567",
+  "region": "Greater Accra",
+  "city": "Accra"
+}
+
+### Update my profile photo
+PUT {{baseUrl}}/users/me
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="name"
+
+Ama Mensah
+--FormBoundary
+Content-Disposition: form-data; name="profilePhoto"; filename="profile.jpg"
+Content-Type: image/jpeg
+
+< {{profilePhotoPath}}
+--FormBoundary--
+
+### Change password
+PUT {{baseUrl}}/users/me/password
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "currentPassword": "password123",
+  "newPassword": "newpassword123"
+}
+
+### Public user profile
+GET {{baseUrl}}/users/{{username}}

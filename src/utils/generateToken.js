@@ -19,7 +19,7 @@ const signAccessToken = (user) => {
       role: user.role || "user",
     },
     accessSecret(),
-    { expiresIn: process.env.JWT_ACCESS_EXPIRES || "15m" },
+    { expiresIn: process.env.JWT_ACCESS_EXPIRES || "3d" },
   );
 };
 
@@ -30,7 +30,7 @@ const signRefreshToken = (user) => {
       tokenVersion: Date.now(),
     },
     refreshSecret(),
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES || "7d" },
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES || "14d" },
   );
 };
 
@@ -41,7 +41,7 @@ const verifyRefreshToken = (token) => jwt.verify(token, refreshSecret());
 const issueTokens = (user) => ({
   accessToken: signAccessToken(user),
   refreshToken: signRefreshToken(user),
-  expiresIn: process.env.JWT_ACCESS_EXPIRES || "15m",
+  expiresIn: process.env.JWT_ACCESS_EXPIRES || "3d",
 });
 
 module.exports = {

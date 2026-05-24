@@ -5,6 +5,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { createNotification } = require("../services/notificationService");
+const { withCache, invalidate } = require("../utils/cache");
 
 const recalculateShopRating = async (shopId) => {
   const stats = await Review.aggregate([
@@ -48,6 +49,7 @@ exports.createReview = asyncHandler(async (req, res) => {
   });
 
   await recalculateShopRating(order.shopId._id);
+  await invalidate(`reviews:${order.shopId._id}`);
   await createNotification({
     userId: order.shopId.ownerId,
     type: "review",
@@ -63,20 +65,29 @@ exports.getShopReviews = asyncHandler(async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
   const filter = { shopId: req.params.shopId };
+  const fetchReviews = async () => {
+    const [reviews, total] = await Promise.all([
+      Review.find(filter)
+        .populate("reviewerId", "name username profilePhoto isKycVerified")
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Review.countDocuments(filter),
+    ]);
 
-  const [reviews, total] = await Promise.all([
-    Review.find(filter)
-      .populate("reviewerId", "name username profilePhoto isKycVerified")
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit),
-    Review.countDocuments(filter),
-  ]);
+    return {
+      reviews,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    };
+  };
 
-  return success(res, {
-    reviews,
-    total,
-    page,
-    pages: Math.ceil(total / limit),
-  });
+  const data =
+    page === 1 && limit === 20
+      ? await withCache(`reviews:${req.params.shopId}`, 300, fetchReviews)
+      : await fetchReviews();
+
+  return success(res, data);
 });

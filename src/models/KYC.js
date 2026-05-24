@@ -23,6 +23,17 @@ const kycSchema = new Schema(
       type: String,
       required: true,
     },
+    phone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    phoneVerified: {
+      type: Boolean,
+      default: false,
+    },
+    phoneOtpRequestedAt: Date,
+    phoneOtpVerifiedAt: Date,
     idImgUrl: {
       type: String,
       required: true,

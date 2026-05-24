@@ -11,12 +11,16 @@ const router = express.Router();
 const shopBody = z.object({
   shopName: z.string().min(2).optional(),
   bio: z.string().optional(),
-  logoUrl: z.string().optional(),
-  bannerUrl: z.string().optional(),
   category: z.enum(["retail", "wholesale", "both"]).optional(),
   instagram: z.string().optional(),
   whatsapp: z.string().optional(),
-});
+  payoutMethodType: z.enum(["mobile_money", "bank_transfer"]).optional(),
+  payoutAccountName: z.string().optional(),
+  payoutProvider: z.string().optional(),
+  payoutAccountNumber: z.string().optional(),
+  payoutBankName: z.string().optional(),
+  payoutBranch: z.string().optional(),
+}).strict();
 
 router.post(
   "/",

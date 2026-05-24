@@ -1,0 +1,98 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@listingId = paste_listing_id_here
+@shopId = paste_shop_id_here
+@imageOnePath = C:\Users\User\Pictures\listing-1.jpg
+@imageTwoPath = C:\Users\User\Pictures\listing-2.jpg
+
+### Browse active listings
+GET {{baseUrl}}/listings?page=1&limit=20
+
+### Get listing by ID
+GET {{baseUrl}}/listings/{{listingId}}
+
+### Get active listings for a shop
+GET {{baseUrl}}/listings/shop/{{shopId}}
+
+### Create listing with JSON
+POST {{baseUrl}}/listings
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Vintage Denim Jacket",
+  "description": "Lightly used denim jacket in great shape.",
+  "category": "outerwear",
+  "brand": "Levi's",
+  "size": "M",
+  "gender": "unisex",
+  "condition": "used",
+  "type": "retail",
+  "price": 8500,
+  "quantity": 1,
+  "status": "active"
+}
+
+### Create listing with images
+POST {{baseUrl}}/listings
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=FormBoundary
+
+--FormBoundary
+Content-Disposition: form-data; name="title"
+
+Vintage Denim Jacket
+--FormBoundary
+Content-Disposition: form-data; name="description"
+
+Lightly used denim jacket in great shape.
+--FormBoundary
+Content-Disposition: form-data; name="category"
+
+outerwear
+--FormBoundary
+Content-Disposition: form-data; name="gender"
+
+unisex
+--FormBoundary
+Content-Disposition: form-data; name="condition"
+
+used
+--FormBoundary
+Content-Disposition: form-data; name="type"
+
+retail
+--FormBoundary
+Content-Disposition: form-data; name="price"
+
+8500
+--FormBoundary
+Content-Disposition: form-data; name="quantity"
+
+1
+--FormBoundary
+Content-Disposition: form-data; name="images"; filename="listing-1.jpg"
+Content-Type: image/jpeg
+
+< {{imageOnePath}}
+--FormBoundary
+Content-Disposition: form-data; name="images"; filename="listing-2.jpg"
+Content-Type: image/jpeg
+
+< {{imageTwoPath}}
+--FormBoundary--
+
+### Update listing
+PUT {{baseUrl}}/listings/{{listingId}}
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "price": 7800,
+  "quantity": 1,
+  "status": "active"
+}
+
+### Soft-delete listing
+DELETE {{baseUrl}}/listings/{{listingId}}
+Authorization: Bearer {{accessToken}}

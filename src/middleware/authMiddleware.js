@@ -30,7 +30,7 @@ const auth = asyncHandler(async (req, res, next) => {
   }
 
   const user = await User.findById(decoded.id).select(
-    "_id name email username role hasShop isKycVerified wallet kycId",
+    "_id name email username phone role hasShop isKycVerified wallet kycId",
   );
 
   if (!user) {
@@ -46,6 +46,7 @@ const auth = asyncHandler(async (req, res, next) => {
     hasShop: Boolean(user.hasShop),
     isKycVerified: Boolean(user.isKycVerified),
     email: user.email,
+    phone: user.phone,
     username: user.username,
   };
   req.currentUser = user;

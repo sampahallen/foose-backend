@@ -1,0 +1,40 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@orderId = paste_order_id_here
+@reference = paste_payment_reference_here
+
+### Initialize Paystack payment
+POST {{baseUrl}}/payments/initialize
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "orderId": "{{orderId}}"
+}
+
+### Verify Paystack payment
+GET {{baseUrl}}/payments/verify/{{reference}}
+Authorization: Bearer {{accessToken}}
+
+### Paystack webhook mock
+POST {{baseUrl}}/payments/webhook
+Content-Type: application/json
+
+{
+  "event": "charge.success",
+  "data": {
+    "reference": "{{reference}}",
+    "channel": "mobile_money"
+  }
+}
+
+### Withdraw seller wallet balance
+POST {{baseUrl}}/payments/withdraw
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "amount": 5000,
+  "recipient": "RCP_xxxxxxxxxxxxx",
+  "reason": "Weekly seller payout"
+}

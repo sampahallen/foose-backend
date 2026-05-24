@@ -1,17 +1,17 @@
 const DELIVERY_FEES = {
   "Greater Accra": 1500,
-  Ashanti: 2500,
-  Western: 3500,
-  Central: 3000,
-  Eastern: 2800,
-  Volta: 3500,
-  Northern: 4500,
-  "Upper East": 5000,
-  "Upper West": 5000,
-  "Brong-Ahafo": 3500,
+  Ashanti: 1500,
+  Western: 1500,
+  Central: 1500,
+  Eastern: 1500,
+  Volta: 1500,
+  Northern: 1500,
+  "Upper East": 1500,
+  "Upper West": 1500,
+  "Brong-Ahafo": 1500,
 };
 
-const DEFAULT_DELIVERY_FEE = 4000;
+const DEFAULT_DELIVERY_FEE = 1500;
 
 module.exports = {
   DELIVERY_FEES,
