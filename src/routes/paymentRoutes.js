@@ -12,7 +12,10 @@ router.post(
   auth,
   validate(
     z.object({
-      body: z.object({ orderId: z.string().min(1) }),
+      body: z.object({
+        callbackUrl: z.string().url().optional(),
+        orderId: z.string().min(1),
+      }),
       params: z.object({}),
       query: z.object({}),
     }),

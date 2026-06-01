@@ -35,6 +35,7 @@ router.post(
           .optional(),
         paymentMethod: z.enum(["paystack_mock", "paystack", "cash_on_pickup"]).optional(),
         mockPayment: z.boolean().optional(),
+        callbackUrl: z.string().url().optional(),
       }),
       params: z.object({}),
       query: z.object({}),

@@ -9,19 +9,19 @@ const paystackClient = axios.create({
   },
 });
 
-const hasPaystackKey = () => Boolean(process.env.PAYSTACK_SECRET_KEY);
+const hasPaystackKey = () => Boolean(process.env.PAYSTACK_SECRET_KEY?.trim());
 
-const initializeTransaction = async ({ email, amount, metadata }) => {
+const requirePaystackKey = () => {
   if (!hasPaystackKey()) {
-    const reference = `mock_${Date.now()}`;
-    return {
-      authorization_url: `${process.env.CLIENT_URL || "http://localhost:5473"}/payments/mock/${reference}`,
-      access_code: "mock_access_code",
-      reference,
-    };
+    throw new Error("PAYSTACK_SECRET_KEY is required to process Paystack payments");
   }
+};
+
+const initializeTransaction = async ({ callbackUrl, email, amount, metadata }) => {
+  requirePaystackKey();
 
   const response = await paystackClient.post("/transaction/initialize", {
+    callback_url: callbackUrl,
     email,
     amount,
     metadata,
@@ -31,14 +31,7 @@ const initializeTransaction = async ({ email, amount, metadata }) => {
 };
 
 const verifyTransaction = async (reference) => {
-  if (!hasPaystackKey() || reference.startsWith("mock_")) {
-    return {
-      status: "success",
-      reference,
-      amount: 0,
-      paid_at: new Date().toISOString(),
-    };
-  }
+  requirePaystackKey();
 
   const response = await paystackClient.get(`/transaction/verify/${reference}`);
   return response.data.data;

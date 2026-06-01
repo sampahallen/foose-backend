@@ -9,6 +9,7 @@ const { invalidate } = require("../utils/cache");
 const { estimateDeliveryFee } = require("../services/deliveryService");
 const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
+const { initializeTransaction } = require("../services/paystackService");
 
 const SELLER_ACTION_WINDOW_MS = 48 * 60 * 60 * 1000;
 const ESCROW_RELEASE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -18,8 +19,6 @@ const orderPopulate = [
   { path: "buyerId", select: "name username email phone isKycVerified" },
   { path: "items.listingId", select: "title images price currency type" },
 ];
-
-const mockPaymentReference = () => `FOOSE-MOCK-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 
 const getOrderForParticipant = async (orderId, userId) => {
   const order = await Order.findById(orderId).populate(orderPopulate);
@@ -118,7 +117,8 @@ exports.placeOrder = asyncHandler(async (req, res) => {
   }
 
   const method = req.body.delivery?.method || "delivery";
-  const paymentMethod = req.body.paymentMethod || "paystack_mock";
+  const requestedPaymentMethod = req.body.paymentMethod || "paystack";
+  const paymentMethod = requestedPaymentMethod === "paystack_mock" ? "paystack" : requestedPaymentMethod;
 
   if (method === "delivery" && paymentMethod === "cash_on_pickup") {
     throw httpError(400, "Cash on pickup is only available for pickup orders");
@@ -163,8 +163,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
   });
   const buyer = await User.findById(req.user.id);
   const now = new Date();
-  const paidOnline = paymentMethod !== "cash_on_pickup";
-  const paymentRef = paidOnline ? mockPaymentReference() : undefined;
+  const paidOnline = paymentMethod === "paystack";
   const createdOrders = [];
 
   for (let index = 0; index < orderLines.length; index += 1) {
@@ -192,13 +191,11 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       deliveryFee: allocatedDeliveryFee,
       totalAmount: line.subtotalAmount + allocatedDeliveryFee,
       currency: line.listing.currency || "GHS",
-      status: paidOnline ? "paid" : "pending",
+      status: "pending",
       paymentMethod,
-      paymentRef,
-      paymentStatus: paidOnline ? "paid" : "cash_on_pickup",
-      paidAt: paidOnline ? now : undefined,
-      escrowStatus: paidOnline ? "held" : "not_held",
-      sellerActionDeadline: new Date(now.getTime() + SELLER_ACTION_WINDOW_MS),
+      paymentStatus: paidOnline ? "unpaid" : "cash_on_pickup",
+      escrowStatus: "not_held",
+      sellerActionDeadline: paidOnline ? undefined : new Date(now.getTime() + SELLER_ACTION_WINDOW_MS),
       delivery: {
         ...req.body.delivery,
         fee: allocatedDeliveryFee,
@@ -206,12 +203,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       },
     });
 
-    if (paidOnline) {
-      seller.wallet.escrow += order.totalAmount;
-      await seller.save();
-    }
-
-    await notifySeller({ buyer, order, seller, shop });
+    if (!paidOnline) await notifySeller({ buyer, order, seller, shop });
     createdOrders.push(order);
   }
 
@@ -243,16 +235,70 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     .populate(orderPopulate)
     .sort({ createdAt: -1 });
 
+  if (paidOnline) {
+    try {
+      const transaction = await initializeTransaction({
+        callbackUrl: req.body.callbackUrl,
+        email: buyer.email,
+        amount: orders.reduce((sum, order) => sum + order.totalAmount, 0),
+        metadata: {
+          buyerId: req.user.id,
+          orderIds: orders.map((order) => order._id.toString()),
+        },
+      });
+
+      await Order.updateMany(
+        { _id: { $in: orders.map((order) => order._id) } },
+        { $set: { paymentRef: transaction.reference } },
+      );
+
+      const pendingOrders = orders.map((order) => {
+        order.paymentRef = transaction.reference;
+        return order;
+      });
+
+      return success(
+        res,
+        {
+          order: pendingOrders[0],
+          orders: pendingOrders,
+          payment: {
+            accessCode: transaction.access_code,
+            authorizationUrl: transaction.authorization_url,
+            provider: "paystack",
+            reference: transaction.reference,
+            status: "pending",
+          },
+        },
+        "Payment initialized. Redirect the buyer to Paystack.",
+        201,
+      );
+    } catch (error) {
+      await Promise.all([
+        Order.updateMany(
+          { _id: { $in: createdOrders.map((order) => order._id) } },
+          { $set: { status: "cancelled", escrowStatus: "not_held", paymentStatus: "unpaid" } },
+        ),
+        ...orderLines.map((line) =>
+          Listing.updateOne(
+            { _id: line.listing._id },
+            { $inc: { quantity: line.quantity }, $set: { status: "active" } },
+          ),
+        ),
+      ]);
+
+      throw error;
+    }
+  }
+
   return success(
     res,
     {
       order: orders[0],
       orders,
-      payment: paidOnline
-        ? { provider: "paystack", mode: "mock", reference: paymentRef, status: "success" }
-        : { provider: "cash", mode: "pickup", status: "pending" },
+      payment: { provider: "cash", mode: "pickup", status: "pending" },
     },
-    paidOnline ? "Mock payment successful and orders placed" : "Pickup order placed",
+    "Pickup order placed",
     201,
   );
 });
