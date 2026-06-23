@@ -51,6 +51,7 @@ router.put(
   ),
   controller.updateMyShop,
 );
+router.get("/", controller.listShops);
 router.get("/:slug", controller.getShopBySlug);
 
 module.exports = router;

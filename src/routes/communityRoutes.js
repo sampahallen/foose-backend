@@ -7,12 +7,16 @@ const { singleImage } = require("../middleware/uploadMiddleware");
 
 const router = express.Router();
 
+const eventTypes = ["online-pop-up", "in-person-pop-up", "online", "pop-up", "fair"];
+
 const eventBody = z.object({
   title: z.string().min(2).optional(),
   description: z.string().optional(),
   date: z.string().min(1).optional(),
+  startTime: z.string().optional(),
+  endTime: z.string().optional(),
   location: z.string().optional(),
-  type: z.enum(["pop-up", "fair", "online"]).optional(),
+  type: z.enum(eventTypes).optional(),
   status: z.enum(["upcoming", "ongoing", "past"]).optional(),
   promotionTags: z.any().optional(),
 }).strict();
@@ -25,6 +29,31 @@ const galleryBody = z.object({
 router.get("/events", controller.listEvents);
 router.get("/events/me", auth, controller.listMyEvents);
 router.get("/events/featured", controller.listFeaturedEvents);
+router.get("/events/:id/manage", auth, controller.getManagedEvent);
+router.post(
+  "/events/:id/listings",
+  auth,
+  validate(
+    z.object({
+      body: z.object({ listingId: z.string().min(1) }).strict(),
+      params: z.object({ id: z.string().min(1) }),
+      query: z.object({}),
+    }),
+  ),
+  controller.addEventListing,
+);
+router.delete(
+  "/events/:id/listings/:listingId",
+  auth,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: z.object({ id: z.string().min(1), listingId: z.string().min(1) }),
+      query: z.object({}),
+    }),
+  ),
+  controller.removeEventListing,
+);
 router.get("/events/:id", controller.getEvent);
 router.post(
   "/events",
@@ -35,7 +64,8 @@ router.post(
       body: eventBody.extend({
         title: z.string().min(2),
         date: z.string().min(1),
-        type: z.enum(["pop-up", "fair", "online"]),
+        startTime: z.string().min(1),
+        type: z.enum(eventTypes),
       }),
       params: z.object({}),
       query: z.object({}),

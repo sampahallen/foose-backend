@@ -27,7 +27,36 @@ const eventSchema = new Schema(
       trim: true,
       default: "",
     },
+    startTime: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    endTime: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    startsAt: {
+      type: Date,
+      index: true,
+    },
+    endsAt: {
+      type: Date,
+      index: true,
+    },
     coverImage: String,
+    shopId: {
+      type: Schema.Types.ObjectId,
+      ref: "DigiShop",
+      index: true,
+    },
+    eventListings: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Listing",
+      },
+    ],
     promotionTags: {
       type: [String],
       default: [],
@@ -37,9 +66,13 @@ const eventSchema = new Schema(
           .map((tag) => String(tag).trim().toLowerCase())
           .filter(Boolean),
     },
+    promotionExpiresAt: {
+      type: Date,
+      index: true,
+    },
     type: {
       type: String,
-      enum: ["pop-up", "fair", "online"],
+      enum: ["online-pop-up", "in-person-pop-up", "pop-up", "fair", "online"],
       required: true,
     },
     attendees: [

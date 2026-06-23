@@ -26,6 +26,24 @@ const messageSchema = new Schema(
       type: String,
       default: "",
     },
+    replyTo: {
+      type: Schema.Types.ObjectId,
+      ref: "Message",
+    },
+    reactions: [
+      {
+        userId: {
+          type: Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        reaction: {
+          type: String,
+          enum: ["thumbs_up", "heart", "thumbs_down", "fire", "sad", "laugh"],
+          required: true,
+        },
+      },
+    ],
     attachments: [
       {
         url: {

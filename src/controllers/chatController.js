@@ -5,14 +5,39 @@ const { success } = require("../utils/apiResponse");
 const httpError = require("../utils/httpError");
 const { createNotification } = require("../services/notificationService");
 
-const makeConversationId = ({ userA, userB, listingId }) => {
-  return `${[userA.toString(), userB.toString()].sort().join("_")}_${listingId || "general"}`;
+const makeConversationId = ({ userA, userB }) => {
+  return `${[userA.toString(), userB.toString()].sort().join("_")}_general`;
+};
+
+const parseConversationParticipants = (conversationId = "") => {
+  const [firstId, secondId, suffix] = String(conversationId).split("_");
+  if (suffix !== "general") return null;
+  if (!mongoose.Types.ObjectId.isValid(firstId) || !mongoose.Types.ObjectId.isValid(secondId)) return null;
+  return [firstId, secondId];
 };
 
 const idValue = (value) => {
   if (!value) return "";
   if (value._id) return value._id.toString();
   return value.toString();
+};
+
+const participantFilter = (conversationId, userId) => {
+  const participants = parseConversationParticipants(conversationId);
+  if (!participants || !participants.includes(userId)) {
+    return {
+      conversationId,
+      $or: [{ senderId: userId }, { receiverId: userId }],
+    };
+  }
+
+  const [firstId, secondId] = participants;
+  return {
+    $or: [
+      { senderId: firstId, receiverId: secondId },
+      { senderId: secondId, receiverId: firstId },
+    ],
+  };
 };
 
 const attachmentType = (mimetype = "") => (mimetype.startsWith("video/") ? "video" : "image");
@@ -23,19 +48,59 @@ const messageType = (attachments) => {
   return types.values().next().value || "text";
 };
 
+const pageOptions = (query, fallbackLimit = 40) => {
+  const page = Math.max(Number(query.page || 1), 1);
+  const limit = Math.min(Math.max(Number(query.limit || fallbackLimit), 1), 100);
+  return { page, limit, skip: (page - 1) * limit };
+};
+
+const messagePopulate = (userSelect = "name username profilePhoto") => [
+  { path: "senderId", select: userSelect },
+  { path: "receiverId", select: userSelect },
+  { path: "listingId", select: "title images price currency" },
+  { path: "reactions.userId", select: "name username profilePhoto" },
+  {
+    path: "replyTo",
+    select: "content attachments listingId senderId createdAt",
+    populate: [
+      { path: "senderId", select: "name username profilePhoto" },
+      { path: "listingId", select: "title images price currency" },
+    ],
+  },
+];
+
 exports.listConversations = asyncHandler(async (req, res) => {
-  const limit = Math.min(Math.max(Number(req.query.limit || 40), 1), 100);
+  const { page, limit, skip } = pageOptions(req.query, 40);
   const userObjectId = new mongoose.Types.ObjectId(req.user.id);
-  const rows = await Message.aggregate([
+  const match = {
+    $or: [{ senderId: userObjectId }, { receiverId: userObjectId }],
+  };
+  const countRows = await Message.aggregate([
+    { $match: match },
     {
-      $match: {
-        $or: [{ senderId: userObjectId }, { receiverId: userObjectId }],
+      $addFields: {
+        participantId: {
+          $cond: [{ $eq: ["$senderId", userObjectId] }, "$receiverId", "$senderId"],
+        },
+      },
+    },
+    { $group: { _id: "$participantId" } },
+    { $count: "total" },
+  ]);
+  const total = countRows[0]?.total || 0;
+  const rows = await Message.aggregate([
+    { $match: match },
+    {
+      $addFields: {
+        participantId: {
+          $cond: [{ $eq: ["$senderId", userObjectId] }, "$receiverId", "$senderId"],
+        },
       },
     },
     { $sort: { createdAt: -1 } },
     {
       $group: {
-        _id: "$conversationId",
+        _id: "$participantId",
         latestMessage: { $first: "$$ROOT" },
         unreadCount: {
           $sum: {
@@ -54,16 +119,13 @@ exports.listConversations = asyncHandler(async (req, res) => {
       },
     },
     { $sort: { "latestMessage.createdAt": -1 } },
+    { $skip: skip },
     { $limit: limit },
   ]);
 
   const latestMessages = await Message.populate(
     rows.map((row) => row.latestMessage),
-    [
-      { path: "senderId", select: "name username profilePhoto" },
-      { path: "receiverId", select: "name username profilePhoto" },
-      { path: "listingId", select: "title images price currency" },
-    ],
+    messagePopulate(),
   );
 
   const conversations = rows.map((row, index) => {
@@ -73,7 +135,7 @@ exports.listConversations = asyncHandler(async (req, res) => {
       senderId === req.user.id ? latestMessage.receiverId : latestMessage.senderId;
 
     return {
-      conversationId: row._id,
+      conversationId: makeConversationId({ userA: req.user.id, userB: row._id }),
       latestMessage,
       unreadCount: row.unreadCount,
       participant,
@@ -81,36 +143,36 @@ exports.listConversations = asyncHandler(async (req, res) => {
     };
   });
 
-  return success(res, { conversations }, "Conversations loaded");
+  return success(res, { conversations, total, page, pages: Math.ceil(total / limit) }, "Conversations loaded");
 });
 
 exports.listConversation = asyncHandler(async (req, res) => {
-  const messages = await Message.find({
-    conversationId: req.params.conversationId,
-    $or: [{ senderId: req.user.id }, { receiverId: req.user.id }],
-  })
-    .sort({ createdAt: 1 });
+  const { page, limit, skip } = pageOptions(req.query, 30);
+  const filter = participantFilter(req.params.conversationId, req.user.id);
+  const [messages, total] = await Promise.all([
+    Message.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Message.countDocuments(filter),
+  ]);
 
   const hasProductContext = messages.some((message) => Boolean(message.listingId));
   const userSelect = hasProductContext
     ? "name username profilePhoto phone"
     : "name username profilePhoto";
 
-  await Message.populate(messages, [
-    { path: "senderId", select: userSelect },
-    { path: "receiverId", select: userSelect },
-    { path: "listingId", select: "title images price currency" },
-  ]);
+  await Message.populate(messages, messagePopulate(userSelect));
 
   return success(
     res,
-    { contactVisible: hasProductContext, messages },
+    { contactVisible: hasProductContext, messages, total, page, pages: Math.ceil(total / limit) },
     "Conversation loaded",
   );
 });
 
 exports.sendMessage = asyncHandler(async (req, res) => {
-  let { conversationId, listingId, receiverId } = req.body;
+  let { conversationId, listingId, receiverId, replyTo } = req.body;
   const content = String(req.body.content || "").trim();
   const attachments = (req.fileUploads || []).map((file) => ({
     mimetype: file.mimetype,
@@ -124,17 +186,17 @@ exports.sendMessage = asyncHandler(async (req, res) => {
   }
 
   if (conversationId) {
-    const latestMessage = await Message.findOne({
-      conversationId,
-      $or: [{ senderId: req.user.id }, { receiverId: req.user.id }],
-    }).sort({ createdAt: -1 });
+    const latestMessage = await Message.findOne(participantFilter(conversationId, req.user.id)).sort({ createdAt: -1 });
 
     if (latestMessage) {
       receiverId =
         latestMessage.senderId.toString() === req.user.id
           ? latestMessage.receiverId.toString()
           : latestMessage.senderId.toString();
-      listingId = listingId || latestMessage.listingId;
+      conversationId = makeConversationId({ userA: req.user.id, userB: receiverId });
+    } else if (parseConversationParticipants(conversationId)?.includes(req.user.id)) {
+      const participants = parseConversationParticipants(conversationId);
+      receiverId = participants.find((id) => id !== req.user.id);
     } else if (!receiverId) {
       throw httpError(404, "Conversation not found");
     }
@@ -148,8 +210,15 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     makeConversationId({
       userA: req.user.id,
       userB: receiverId,
-      listingId,
     });
+
+  if (replyTo) {
+    const repliedMessage = await Message.findOne({
+      _id: replyTo,
+      ...participantFilter(conversationId, req.user.id),
+    });
+    if (!repliedMessage) throw httpError(404, "Reply target not found");
+  }
 
   const message = await Message.create({
     conversationId,
@@ -157,15 +226,12 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     receiverId,
     listingId,
     content,
+    replyTo,
     attachments,
     type: content && attachments.length ? "mixed" : messageType(attachments),
   });
 
-  await message.populate([
-    { path: "senderId", select: listingId ? "name username profilePhoto phone" : "name username profilePhoto" },
-    { path: "receiverId", select: listingId ? "name username profilePhoto phone" : "name username profilePhoto" },
-    { path: "listingId", select: "title images price currency" },
-  ]);
+  await message.populate(messagePopulate(listingId ? "name username profilePhoto phone" : "name username profilePhoto"));
 
   await createNotification({
     userId: receiverId,
@@ -181,13 +247,37 @@ exports.sendMessage = asyncHandler(async (req, res) => {
 exports.markRead = asyncHandler(async (req, res) => {
   await Message.updateMany(
     {
-      conversationId: req.params.conversationId,
+      ...participantFilter(req.params.conversationId, req.user.id),
       receiverId: req.user.id,
     },
     { isRead: true },
   );
 
   return success(res, {}, "Messages marked as read");
+});
+
+exports.reactToMessage = asyncHandler(async (req, res) => {
+  const allowed = ["thumbs_up", "heart", "thumbs_down", "fire", "sad", "laugh"];
+  const reaction = String(req.body.reaction || "");
+  if (!allowed.includes(reaction)) throw httpError(422, "Unsupported reaction");
+
+  const message = await Message.findOne({
+    _id: req.params.messageId,
+    $or: [{ senderId: req.user.id }, { receiverId: req.user.id }],
+  });
+  if (!message) throw httpError(404, "Message not found");
+
+  const existing = message.reactions.find((item) => item.userId.toString() === req.user.id);
+  if (existing) {
+    existing.reaction = reaction;
+  } else {
+    message.reactions.push({ userId: req.user.id, reaction });
+  }
+
+  await message.save();
+  await message.populate(messagePopulate());
+
+  return success(res, { message }, "Reaction saved");
 });
 
 exports.makeConversationId = makeConversationId;

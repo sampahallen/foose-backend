@@ -20,11 +20,18 @@ exports.getMe = asyncHandler(async (req, res) => {
 
 exports.updateMe = asyncHandler(async (req, res) => {
   const updates = {};
-  const allowed = ["name", "phone"];
+  const allowed = ["name", "phone", "bio"];
 
   allowed.forEach((field) => {
-    if (req.body[field] !== undefined) updates[field] = req.body[field];
+    if (req.body[field] !== undefined) updates[field] = String(req.body[field]).trim();
   });
+
+  if (req.body.username !== undefined) {
+    const username = String(req.body.username).trim().toLowerCase();
+    const existing = await User.findOne({ username, _id: { $ne: req.user.id } }).select("_id");
+    if (existing) throw httpError(409, "That username is already taken");
+    updates.username = username;
+  }
 
   if (req.body.region !== undefined || req.body.city !== undefined) {
     updates.location = {
@@ -92,7 +99,7 @@ exports.getMyProfile = asyncHandler(async (req, res) => {
 
 exports.getProfileByUsername = asyncHandler(async (req, res) => {
   const user = await User.findOne({ username: req.params.username.toLowerCase() })
-    .select("name username profilePhoto location isKycVerified hasShop following createdAt")
+    .select("name username bio profilePhoto location isKycVerified hasShop following createdAt")
     .lean();
 
   if (!user) {
@@ -165,7 +172,7 @@ exports.changePassword = asyncHandler(async (req, res) => {
 
 exports.getPublicProfile = asyncHandler(async (req, res) => {
   const user = await User.findOne({ username: req.params.username.toLowerCase() })
-    .select("name username profilePhoto location isKycVerified hasShop following createdAt")
+    .select("name username bio profilePhoto location isKycVerified hasShop following createdAt")
     .populate("kycId", "status");
 
   if (!user) {

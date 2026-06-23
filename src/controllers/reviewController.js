@@ -1,4 +1,5 @@
 const DigiShop = require("../models/DigiShop");
+const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Review = require("../models/Review");
 const asyncHandler = require("../utils/asyncHandler");
@@ -27,35 +28,56 @@ const recalculateShopRating = async (shopId) => {
 };
 
 exports.createReview = asyncHandler(async (req, res) => {
-  const order = await Order.findOne({
-    _id: req.body.orderId,
-    buyerId: req.user.id,
-    status: "delivered",
-  }).populate("shopId", "ownerId shopName");
+  let shop;
+  let orderId;
 
-  if (!order) {
-    throw httpError(400, "Review requires a delivered order");
+  if (req.body.orderId) {
+    const order = await Order.findOne({
+      _id: req.body.orderId,
+      buyerId: req.user.id,
+      status: "delivered",
+    }).populate("shopId", "ownerId shopName slug");
+
+    if (!order) {
+      throw httpError(400, "Review requires a delivered order");
+    }
+
+    const existingReview = await Review.findOne({ orderId: order._id });
+    if (existingReview) throw httpError(409, "Order has already been reviewed");
+
+    shop = order.shopId;
+    orderId = order._id;
+  } else {
+    shop = await DigiShop.findById(req.body.shopId).select("ownerId shopName slug");
+
+    if (!shop) throw httpError(404, "DigiShop not found");
+    if (shop.ownerId.toString() === req.user.id) throw httpError(422, "You cannot review your own shop");
+
+    const existingReview = await Review.findOne({
+      reviewerId: req.user.id,
+      shopId: shop._id,
+      source: "direct",
+    });
+    if (existingReview) throw httpError(409, "You have already reviewed this shop");
   }
-
-  const existingReview = await Review.findOne({ orderId: order._id });
-  if (existingReview) throw httpError(409, "Order has already been reviewed");
 
   const review = await Review.create({
     reviewerId: req.user.id,
-    shopId: order.shopId._id,
-    orderId: order._id,
+    shopId: shop._id,
+    orderId: orderId || new mongoose.Types.ObjectId(),
+    source: orderId ? "order" : "direct",
     rating: req.body.rating,
     comment: req.body.comment,
   });
 
-  await recalculateShopRating(order.shopId._id);
-  await invalidate(`reviews:${order.shopId._id}`);
+  await recalculateShopRating(shop._id);
+  await invalidate(`reviews:${shop._id}`);
   await createNotification({
-    userId: order.shopId.ownerId,
+    userId: shop.ownerId,
     type: "review",
     title: "New review",
-    body: `${order.shopId.shopName} received a new review.`,
-    link: `/shops/${order.shopId._id}/reviews`,
+    body: `${shop.shopName} received a new review.`,
+    link: shop.slug ? `/shops/${shop.slug}` : `/shops/${shop._id}`,
   });
 
   return success(res, { review }, "Review created", 201);
@@ -90,4 +112,36 @@ exports.getShopReviews = asyncHandler(async (req, res) => {
       : await fetchReviews();
 
   return success(res, data);
+});
+
+exports.deleteReview = asyncHandler(async (req, res) => {
+  const review = await Review.findOneAndDelete({
+    _id: req.params.reviewId,
+    reviewerId: req.user.id,
+  });
+
+  if (!review) throw httpError(404, "Review not found");
+
+  await recalculateShopRating(review.shopId);
+  await invalidate(`reviews:${review.shopId}`);
+
+  return success(res, {}, "Review deleted");
+});
+
+exports.updateReview = asyncHandler(async (req, res) => {
+  const review = await Review.findOne({
+    _id: req.params.reviewId,
+    reviewerId: req.user.id,
+  });
+
+  if (!review) throw httpError(404, "Review not found");
+
+  review.rating = req.body.rating;
+  review.comment = req.body.comment;
+  await review.save();
+
+  await recalculateShopRating(review.shopId);
+  await invalidate(`reviews:${review.shopId}`);
+
+  return success(res, { review }, "Review updated");
 });

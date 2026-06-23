@@ -13,8 +13,6 @@ const submissionPayload = (req, existingKyc) => {
   const idImgUrl = firstFileUrl(req, "idImg") || existingKyc?.idImgUrl;
   const selfieImgUrl = firstFileUrl(req, "selfie") || existingKyc?.selfieImgUrl;
   const phone = String(req.body.phone || existingKyc?.phone || "").trim();
-  const phoneOtp = String(req.body.phoneOtp || "").trim();
-  const phoneVerified = Boolean(phone && phoneOtp);
 
   if (!idImgUrl || !selfieImgUrl) {
     throw httpError(
@@ -28,9 +26,9 @@ const submissionPayload = (req, existingKyc) => {
     idNo: req.body.idNo,
     dob: req.body.dob,
     phone,
-    phoneVerified,
-    phoneOtpRequestedAt: phone ? existingKyc?.phoneOtpRequestedAt || new Date() : undefined,
-    phoneOtpVerifiedAt: phoneVerified ? new Date() : existingKyc?.phoneOtpVerifiedAt,
+    phoneVerified: false,
+    phoneOtpRequestedAt: undefined,
+    phoneOtpVerifiedAt: undefined,
     idImgUrl,
     selfieImgUrl,
     status: "pending",

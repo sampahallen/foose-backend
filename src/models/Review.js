@@ -17,8 +17,13 @@ const reviewSchema = new Schema(
     orderId: {
       type: Schema.Types.ObjectId,
       ref: "Order",
-      required: true,
+      sparse: true,
       unique: true,
+    },
+    source: {
+      type: String,
+      enum: ["order", "direct"],
+      default: "order",
     },
     rating: {
       type: Number,

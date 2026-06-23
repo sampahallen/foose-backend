@@ -15,7 +15,8 @@ const listingBody = z.object({
   brand: z.string().optional(),
   size: z.string().optional(),
   gender: z.enum(["men", "women", "unisex", "kids"]).optional(),
-  condition: z.enum(["new", "used"]).optional(),
+  condition: z.enum(["excellent", "great", "good", "fair", "poor"]).optional(),
+  color: z.enum(["red", "burgundy", "orange", "pink", "purple", "blue", "navy", "green", "khaki", "multi", "silver", "gold"]).optional(),
   type: z.enum(["retail", "wholesale"]).optional(),
   price: z.coerce.number().int().nonnegative().optional(),
   currency: z.string().optional(),
@@ -26,6 +27,7 @@ const listingBody = z.object({
   keptImagesTouched: z.any().optional(),
   volumeDiscounts: z.any().optional(),
   promotionTags: z.any().optional(),
+  visibility: z.enum(["marketplace", "event"]).optional(),
   status: z.enum(["active", "sold", "draft", "removed"]).optional(),
 }).strict();
 

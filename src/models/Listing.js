@@ -41,7 +41,26 @@ const listingSchema = new Schema(
     },
     condition: {
       type: String,
-      enum: ["new", "used"],
+      enum: ["excellent", "great", "good", "fair", "poor"],
+      index: true,
+    },
+    color: {
+      type: String,
+      enum: [
+        "red",
+        "burgundy",
+        "orange",
+        "pink",
+        "purple",
+        "blue",
+        "navy",
+        "green",
+        "khaki",
+        "multi",
+        "silver",
+        "gold",
+      ],
+      default: "multi",
       index: true,
     },
     type: {
@@ -85,6 +104,16 @@ const listingSchema = new Schema(
         (Array.isArray(tags) ? tags : [])
           .map((tag) => String(tag).trim().toLowerCase())
           .filter(Boolean),
+    },
+    promotionExpiresAt: {
+      type: Date,
+      index: true,
+    },
+    visibility: {
+      type: String,
+      enum: ["marketplace", "event"],
+      default: "marketplace",
+      index: true,
     },
     status: {
       type: String,

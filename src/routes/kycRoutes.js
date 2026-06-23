@@ -14,7 +14,6 @@ const kycSchema = z.object({
     idNo: z.string().min(1),
     dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     phone: z.string().optional(),
-    phoneOtp: z.string().optional(),
   }),
   params: z.object({}),
   query: z.object({}),

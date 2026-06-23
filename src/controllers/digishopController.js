@@ -139,3 +139,32 @@ exports.getShopBySlug = asyncHandler(async (req, res) => {
 
   return success(res, { shop }, "DigiShop loaded");
 });
+
+exports.listShops = asyncHandler(async (req, res) => {
+  const page = Math.max(Number(req.query.page || 1), 1);
+  const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
+  const filter = { isLive: true };
+
+  if (req.query.category) filter.category = req.query.category;
+  if (req.query.q) {
+    const pattern = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    filter.$or = [{ shopName: pattern }, { bio: pattern }];
+  }
+
+  const [shops, total] = await Promise.all([
+    DigiShop.find(filter)
+      .sort({ rating: -1, totalReviews: -1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate("ownerId", "name username profilePhoto isKycVerified")
+      .lean(),
+    DigiShop.countDocuments(filter),
+  ]);
+
+  return success(res, {
+    shops,
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  }, "DigiShops loaded");
+});

@@ -16,7 +16,9 @@ router.put(
   validate(
     z.object({
       body: z.object({
-        name: z.string().optional(),
+        name: z.string().min(1).optional(),
+        username: z.string().regex(/^[a-zA-Z0-9_]{3,20}$/).optional(),
+        bio: z.string().max(280).optional(),
         phone: z.string().optional(),
         region: z.string().optional(),
         city: z.string().optional(),

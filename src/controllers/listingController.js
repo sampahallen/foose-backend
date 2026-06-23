@@ -97,9 +97,9 @@ const listingInput = (req, currentListing) => {
 
 exports.listListings = asyncHandler(async (req, res) => {
   const { page, limit, skip } = pageOptions(req.query);
-  const filter = { status: "active" };
+  const filter = { status: "active", visibility: { $ne: "event" } };
 
-  ["category", "type", "gender", "condition", "size", "brand"].forEach((field) => {
+  ["category", "type", "gender", "condition", "color", "size", "brand"].forEach((field) => {
     if (req.query[field]) filter[field] = req.query[field];
   });
 
@@ -139,7 +139,9 @@ exports.getShopListings = asyncHandler(async (req, res) => {
     Listing.find({
       shopId: req.params.shopId,
       status: "active",
+      visibility: { $ne: "event" },
     })
+      .populate("shopId", "shopName slug rating totalReviews")
       .sort({ createdAt: -1 })
       .lean(),
   );

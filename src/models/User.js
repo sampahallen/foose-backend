@@ -33,6 +33,12 @@ const userSchema = new Schema(
       trim: true,
       default: "",
     },
+    bio: {
+      type: String,
+      trim: true,
+      maxlength: 280,
+      default: "",
+    },
     profilePhoto: String,
     location: {
       region: {
@@ -60,6 +66,29 @@ const userSchema = new Schema(
     resetPasswordExpires: Date,
     refreshTokens: {
       type: [String],
+      default: [],
+      select: false,
+    },
+    authProviders: {
+      type: [
+        {
+          provider: {
+            type: String,
+            enum: ["google", "apple"],
+            required: true,
+          },
+          providerId: {
+            type: String,
+            required: true,
+          },
+          email: {
+            type: String,
+            lowercase: true,
+            trim: true,
+            default: "",
+          },
+        },
+      ],
       default: [],
       select: false,
     },

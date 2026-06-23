@@ -6,8 +6,17 @@ const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { issueTokens, verifyRefreshToken } = require("../utils/generateToken");
 const { sendEmail } = require("../services/emailService");
+const {
+  appleAuthorizationUrl,
+  clientCallbackUrl,
+  findOrCreateOAuthUser,
+  getAppleProfile,
+  getGoogleProfile,
+  googleAuthorizationUrl,
+  readState,
+} = require("../services/oauthService");
 
-const userFields = "-passwordHash -refreshTokens -emailVerifyToken -resetPasswordToken -resetPasswordExpires";
+const userFields = "-passwordHash -refreshTokens -emailVerifyToken -resetPasswordToken -resetPasswordExpires -authProviders";
 
 const sendAuth = async (res, user, message, statusCode = 200) => {
   const tokens = issueTokens(user);
@@ -19,6 +28,21 @@ const sendAuth = async (res, user, message, statusCode = 200) => {
 };
 
 const makeToken = () => crypto.randomBytes(32).toString("hex");
+
+const sendOAuthRedirect = async (res, user, redirectTarget) => {
+  const tokens = issueTokens(user);
+  user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
+  await user.save();
+
+  const params = new URLSearchParams({
+    accessToken: tokens.accessToken,
+    expiresIn: tokens.expiresIn || "",
+    redirect: redirectTarget || "/",
+    refreshToken: tokens.refreshToken,
+  });
+
+  return res.redirect(`${clientCallbackUrl()}#${params.toString()}`);
+};
 
 exports.register = asyncHandler(async (req, res) => {
   const { name, email, username, password, phone, location } = req.body;
@@ -74,6 +98,28 @@ exports.login = asyncHandler(async (req, res) => {
   }
 
   return sendAuth(res, user, "Login successful");
+});
+
+exports.startGoogleOAuth = asyncHandler(async (req, res) => {
+  return res.redirect(googleAuthorizationUrl(req.query.redirect));
+});
+
+exports.startAppleOAuth = asyncHandler(async (req, res) => {
+  return res.redirect(appleAuthorizationUrl(req.query.redirect));
+});
+
+exports.googleCallback = asyncHandler(async (req, res) => {
+  const redirectTarget = readState(req.query.state);
+  const profile = await getGoogleProfile(req.query.code);
+  const user = await findOrCreateOAuthUser(profile);
+  return sendOAuthRedirect(res, user, redirectTarget);
+});
+
+exports.appleCallback = asyncHandler(async (req, res) => {
+  const redirectTarget = readState(req.body.state || req.query.state);
+  const profile = await getAppleProfile(req.body.code || req.query.code, req.body.user);
+  const user = await findOrCreateOAuthUser(profile);
+  return sendOAuthRedirect(res, user, redirectTarget);
 });
 
 exports.refresh = asyncHandler(async (req, res) => {
