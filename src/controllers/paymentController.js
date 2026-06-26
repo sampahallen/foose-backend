@@ -34,9 +34,9 @@ const PROMOTION_CONFIG = {
   listing: {
     tags: ["top-pick"],
     packages: {
-      basic: { amount: 100, amountGhs: 1, durationDays: 2, label: "Basic Top Pick listing promotion" },
-      lite: { amount: 500, amountGhs: 5, durationDays: 7, label: "Lite Top Pick listing promotion" },
-      premium: { amount: 1500, amountGhs: 15, durationDays: 30, label: "Premium Top Pick listing promotion" },
+      basic: { amount: 1000, amountGhs: 10, durationDays: 3, itemLimit: 10, label: "Basic Top Pick listing bundle" },
+      lite: { amount: 3000, amountGhs: 30, durationDays: 7, itemLimit: 15, label: "Lite Top Pick listing bundle" },
+      premium: { amount: 5000, amountGhs: 50, durationDays: 30, itemLimit: 30, label: "Premium Top Pick listing bundle" },
     },
   },
 };
@@ -55,19 +55,31 @@ const promotionPackage = (targetType, packageName = "basic") => {
 const addUniqueTags = (currentTags, nextTags) =>
   Array.from(new Set([...(currentTags || []), ...nextTags].map((tag) => String(tag).trim().toLowerCase()).filter(Boolean)));
 
-const loadPromotionTarget = async ({ targetId, targetType, userId }) => {
+const listingTargetIds = (targetId, targetIds) => {
+  const ids = Array.isArray(targetIds) ? targetIds : targetIds ? [targetIds] : [];
+  if (targetId) ids.push(targetId);
+  return Array.from(new Set(ids.map((id) => String(id || "").trim()).filter(Boolean)));
+};
+
+const loadPromotionTarget = async ({ targetId, targetIds, targetType, userId, itemLimit }) => {
   if (targetType === "listing") {
     const shop = await DigiShop.findOne({ ownerId: userId }).select("_id");
     if (!shop) throw httpError(403, "A DigiShop is required to promote listings");
 
-    const listing = await Listing.findOne({
-      _id: targetId,
+    const ids = listingTargetIds(targetId, targetIds);
+    if (!ids.length) throw httpError(422, "Choose at least one listing to promote");
+    if (itemLimit && ids.length > itemLimit) {
+      throw httpError(422, `This package supports up to ${itemLimit} listings`);
+    }
+
+    const listings = await Listing.find({
+      _id: { $in: ids },
       shopId: shop._id,
       status: { $ne: "removed" },
     });
-    if (!listing) throw httpError(404, "Listing not found");
+    if (listings.length !== ids.length) throw httpError(404, "One or more listings could not be found");
 
-    return { target: listing };
+    return { targets: listings };
   }
 
   if (targetType === "event") {
@@ -189,7 +201,8 @@ exports.initializePromotionPayment = asyncHandler(async (req, res) => {
 
   if (!config) throw httpError(422, "Choose listing or event promotion");
 
-  await loadPromotionTarget({ targetId, targetType, userId: req.user.id });
+  const targetIds = listingTargetIds(targetId, req.body.targetIds);
+  await loadPromotionTarget({ targetId, targetIds, targetType, userId: req.user.id, itemLimit: config.itemLimit });
 
   const transaction = await initializeTransaction({
     callbackUrl: req.body.callbackUrl,
@@ -202,6 +215,7 @@ exports.initializePromotionPayment = asyncHandler(async (req, res) => {
       packageName: config.packageName,
       purpose: "promotion",
       targetId,
+      targetIds: targetType === "listing" ? targetIds : undefined,
       targetType,
       userId: req.user.id,
     },
@@ -216,6 +230,7 @@ exports.initializePromotionPayment = asyncHandler(async (req, res) => {
         authorizationUrl: transaction.authorization_url,
         reference: transaction.reference,
         targetId,
+        targetIds: targetType === "listing" ? targetIds : undefined,
         targetType,
         packageName: config.packageName,
       },
@@ -234,6 +249,7 @@ exports.verifyPromotionPayment = asyncHandler(async (req, res) => {
   const metadata = transaction.metadata || {};
   const targetType = metadata.targetType;
   const targetId = metadata.targetId;
+  const targetIds = listingTargetIds(targetId, metadata.targetIds);
   const config = promotionPackage(targetType, metadata.packageName);
 
   if (!config || metadata.purpose !== "promotion") {
@@ -248,27 +264,39 @@ exports.verifyPromotionPayment = asyncHandler(async (req, res) => {
     throw httpError(400, "Promotion payment amount does not match the selected campaign");
   }
 
-  const { target } = await loadPromotionTarget({ targetId, targetType, userId: req.user.id });
+  const { target, targets } = await loadPromotionTarget({
+    itemLimit: config.itemLimit,
+    targetId,
+    targetIds,
+    targetType,
+    userId: req.user.id,
+  });
 
   if (targetType === "listing") {
     const now = new Date();
-    const activeUntil =
-      target.promotionExpiresAt && target.promotionExpiresAt > now
-        ? new Date(target.promotionExpiresAt)
-        : now;
-    target.promotionTags = addUniqueTags(target.promotionTags, config.tags);
-    target.promotionExpiresAt = new Date(activeUntil.getTime() + config.durationDays * 24 * 60 * 60 * 1000);
-    await target.save();
-    await invalidate("listings:featured", `listing:${target._id}`, `shop:${target.shopId}:listings`);
+    await Promise.all(
+      targets.map(async (listing) => {
+        const activeUntil =
+          listing.promotionExpiresAt && listing.promotionExpiresAt > now
+            ? new Date(listing.promotionExpiresAt)
+            : now;
+        listing.promotionTags = addUniqueTags(listing.promotionTags, config.tags);
+        listing.promotionExpiresAt = new Date(activeUntil.getTime() + config.durationDays * 24 * 60 * 60 * 1000);
+        await listing.save();
+        await invalidate("listings:featured", `listing:${listing._id}`, `shop:${listing.shopId}:listings`);
+      }),
+    );
     await invalidatePattern("search:top-picks:*");
 
     return success(
       res,
       {
-        listing: target,
+        listing: targets[0],
+        listings: targets,
         promotion: {
           amountGhs: config.amountGhs,
-          endsAt: target.promotionExpiresAt,
+          endsAt: targets[0]?.promotionExpiresAt,
+          itemLimit: config.itemLimit,
           packageName: config.packageName,
           reference: req.params.reference,
         },

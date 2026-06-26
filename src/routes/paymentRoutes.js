@@ -31,8 +31,11 @@ router.post(
       body: z.object({
         callbackUrl: z.string().url().optional(),
         packageName: z.enum(["basic", "lite", "premium"]).optional(),
-        targetId: z.string().min(1),
+        targetId: z.string().min(1).optional(),
+        targetIds: z.array(z.string().min(1)).max(30).optional(),
         targetType: z.enum(["listing", "event"]),
+      }).refine((body) => body.targetId || body.targetIds?.length, {
+        message: "targetId or targetIds is required",
       }),
       params: z.object({}),
       query: z.object({}),
