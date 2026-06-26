@@ -9,9 +9,7 @@ const { initSocket } = require("./src/config/socket");
 const PORT = process.env.PORT || 5000;
 
 const start = async () => {
-  await connectDB();
-  await connectRedis();
-
+  // Start the server FIRST so it can respond to health checks
   const app = require("./src/app");
   const httpServer = http.createServer(app);
   initSocket(httpServer);
@@ -19,6 +17,23 @@ const start = async () => {
   httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
+
+  // Then connect to databases (non-blocking)
+  try {
+    await connectDB();
+    console.log("MongoDB connected");
+  } catch (error) {
+    console.error("MongoDB connection failed:", error.message);
+    // Don't crash - let the server run
+  }
+
+  try {
+    await connectRedis();
+    console.log("Redis connected");
+  } catch (error) {
+    console.error("Redis connection failed:", error.message);
+    // Don't crash - let the server run
+  }
 };
 
 start().catch((error) => {

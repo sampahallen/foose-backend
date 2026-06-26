@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
+    "build": "npm run compile",
     "start": "node server.js",
     "check": "node --check server.js && node --check src/app.js"
   },
