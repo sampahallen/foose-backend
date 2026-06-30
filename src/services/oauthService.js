@@ -222,5 +222,6 @@ module.exports = {
   getAppleProfile,
   getGoogleProfile,
   googleAuthorizationUrl,
+  publicApiUrl,
   readState,
 };

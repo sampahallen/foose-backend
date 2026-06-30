@@ -7,7 +7,13 @@ const { authLimiter } = require("../middleware/rateLimitMiddleware");
 
 const router = express.Router();
 
-const password = z.string().min(6);
+const password = z.string().min(1);
+const strongPassword = z
+  .string()
+  .min(8)
+  .regex(/[A-Z]/, "Password must include a capital letter")
+  .regex(/\d/, "Password must include a number")
+  .regex(/[^A-Za-z0-9]/, "Password must include a symbol");
 
 router.get("/oauth/google", authLimiter, controller.startGoogleOAuth);
 router.get("/oauth/apple", authLimiter, controller.startAppleOAuth);
@@ -23,8 +29,8 @@ router.post(
       body: z.object({
         name: z.string().min(2),
         email: z.string().email(),
-        username: z.string().regex(/^[a-zA-Z0-9_]{3,20}$/),
-        password,
+        username: z.string().regex(/^[a-zA-Z0-9_.]{3,20}$/),
+        password: strongPassword,
         phone: z.string().optional(),
         location: z
           .object({
@@ -87,7 +93,7 @@ router.post(
   controller.logout,
 );
 
-router.get("/verify-email/:token", controller.verifyEmail);
+router.get("/verify-email/:token", authLimiter, controller.verifyEmail);
 
 router.post(
   "/forgot-password",
@@ -107,7 +113,7 @@ router.post(
   authLimiter,
   validate(
     z.object({
-      body: z.object({ password }),
+      body: z.object({ password: strongPassword }),
       params: z.object({ token: z.string().min(1) }),
       query: z.object({}),
     }),

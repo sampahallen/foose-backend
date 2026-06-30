@@ -5,6 +5,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { issueTokens, verifyRefreshToken } = require("../utils/generateToken");
+const { normalizePhone } = require("../utils/phone");
 const { sendEmail } = require("../services/emailService");
 const {
   appleAuthorizationUrl,
@@ -13,10 +14,13 @@ const {
   getAppleProfile,
   getGoogleProfile,
   googleAuthorizationUrl,
+  publicApiUrl,
   readState,
 } = require("../services/oauthService");
 
-const userFields = "-passwordHash -refreshTokens -emailVerifyToken -resetPasswordToken -resetPasswordExpires -authProviders";
+const EMAIL_VERIFY_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+const userFields = "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -authProviders";
 
 const sendAuth = async (res, user, message, statusCode = 200) => {
   const tokens = issueTokens(user);
@@ -28,6 +32,49 @@ const sendAuth = async (res, user, message, statusCode = 200) => {
 };
 
 const makeToken = () => crypto.randomBytes(32).toString("hex");
+
+const hashToken = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
+
+const verificationLink = (token) => `${publicApiUrl()}/api/auth/verify-email/${encodeURIComponent(token)}`;
+
+const callbackUrlWithParams = (params) => `${clientCallbackUrl()}#${params.toString()}`;
+
+const wantsBrowserRedirect = (req) => req.accepts(["html", "json"]) === "html";
+
+const sendVerificationEmail = async (user) => {
+  const emailVerifyToken = makeToken();
+  user.emailVerifyExpires = new Date(Date.now() + EMAIL_VERIFY_TOKEN_TTL_MS);
+  user.emailVerifyToken = hashToken(emailVerifyToken);
+  await user.save();
+
+  const link = verificationLink(emailVerifyToken);
+
+  return sendEmail({
+    to: user.email,
+    subject: "Verify your Foose account",
+    text: `Click this secure link to verify your Foose account and sign in. It expires in 15 minutes: ${link}`,
+    html: `
+      <p>Click the secure link below to verify your Foose account and sign in.</p>
+      <p><a href="${link}">Verify and sign in</a></p>
+      <p>This link expires in 15 minutes and can only be used once.</p>
+    `,
+  });
+};
+
+const sendAuthRedirect = async (res, user, redirectTarget = "/login") => {
+  const tokens = issueTokens(user);
+  user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
+  await user.save();
+
+  const params = new URLSearchParams({
+    accessToken: tokens.accessToken,
+    expiresIn: tokens.expiresIn || "",
+    redirect: redirectTarget,
+    refreshToken: tokens.refreshToken,
+  });
+
+  return res.redirect(callbackUrlWithParams(params));
+};
 
 const sendOAuthRedirect = async (res, user, redirectTarget) => {
   const tokens = issueTokens(user);
@@ -58,25 +105,18 @@ exports.register = asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const emailVerifyToken = makeToken();
-
   const user = await User.create({
     name: name.trim(),
     email: normalizedEmail,
     username: normalizedUsername,
     passwordHash,
-    phone,
+    phone: normalizePhone(phone),
     location,
-    emailVerifyToken,
   });
 
-  await sendEmail({
-    to: user.email,
-    subject: "Verify your Foose account",
-    text: `Use this token to verify your account: ${emailVerifyToken}`,
-  });
+  await sendVerificationEmail(user);
 
-  return sendAuth(res, user, "Registration successful", 201);
+  return success(res, { email: user.email }, "Check your inbox for a verification link", 201);
 });
 
 exports.login = asyncHandler(async (req, res) => {
@@ -95,6 +135,11 @@ exports.login = asyncHandler(async (req, res) => {
 
   if (!passwordMatches) {
     throw httpError(401, "Invalid credentials");
+  }
+
+  if (!user.isEmailVerified) {
+    await sendVerificationEmail(user);
+    throw httpError(403, "Email verification required. We sent a fresh sign-in link to your inbox.");
   }
 
   return sendAuth(res, user, "Login successful");
@@ -161,17 +206,40 @@ exports.logout = asyncHandler(async (req, res) => {
 });
 
 exports.verifyEmail = asyncHandler(async (req, res) => {
-  const user = await User.findOne({ emailVerifyToken: req.params.token });
+  const user = await User.findOneAndUpdate(
+    {
+      emailVerifyExpires: { $gt: new Date() },
+      emailVerifyToken: hashToken(req.params.token),
+    },
+    {
+      $set: { isEmailVerified: true },
+      $unset: { emailVerifyExpires: "", emailVerifyToken: "" },
+    },
+    { new: true },
+  ).select("+refreshTokens");
 
   if (!user) {
+    if (wantsBrowserRedirect(req)) {
+      const params = new URLSearchParams({
+        error: "Verification link is invalid or expired",
+        redirect: "/login",
+      });
+      return res.redirect(callbackUrlWithParams(params));
+    }
+
     throw httpError(400, "Invalid email verification token");
   }
 
-  user.isEmailVerified = true;
-  user.emailVerifyToken = undefined;
+  if (wantsBrowserRedirect(req)) {
+    return sendAuthRedirect(res, user);
+  }
+
+  const tokens = issueTokens(user);
+  user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
   await user.save();
 
-  return success(res, { isEmailVerified: true }, "Email verified");
+  const safeUser = await User.findById(user._id).select(userFields);
+  return success(res, { user: safeUser, tokens }, "Email verified");
 });
 
 exports.forgotPassword = asyncHandler(async (req, res) => {

@@ -21,7 +21,7 @@ const userSchema = new Schema(
       unique: true,
       lowercase: true,
       trim: true,
-      match: /^[a-zA-Z0-9_]{3,20}$/,
+      match: /^[a-zA-Z0-9_.]{3,20}$/,
     },
     passwordHash: {
       type: String,
@@ -62,6 +62,7 @@ const userSchema = new Schema(
       default: false,
     },
     emailVerifyToken: String,
+    emailVerifyExpires: Date,
     resetPasswordToken: String,
     resetPasswordExpires: Date,
     refreshTokens: {

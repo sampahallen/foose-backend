@@ -6,6 +6,7 @@ const slugify = require("../utils/slugify");
 const { success } = require("../utils/apiResponse");
 const { sendDigiShopWelcomeEmail } = require("../services/emailService");
 const { withCache, invalidate } = require("../utils/cache");
+const { normalizePhone } = require("../utils/phone");
 
 const firstFileUrl = (req, ...fieldNames) => {
   for (const fieldName of fieldNames) {
@@ -20,7 +21,7 @@ const payoutMethodFromBody = (body) => ({
   type: body.payoutMethodType || "mobile_money",
   accountName: body.payoutAccountName || "",
   provider: body.payoutProvider || "",
-  accountNumber: body.payoutAccountNumber || "",
+  accountNumber: normalizePhone(body.payoutAccountNumber || ""),
   bankName: body.payoutBankName || "",
   branch: body.payoutBranch || "",
 });

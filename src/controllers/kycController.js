@@ -3,6 +3,7 @@ const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { normalizePhone } = require("../utils/phone");
 
 const firstFileUrl = (req, fieldName) => {
   const url = req.fileUrlMap?.[fieldName]?.[0];
@@ -12,7 +13,7 @@ const firstFileUrl = (req, fieldName) => {
 const submissionPayload = (req, existingKyc) => {
   const idImgUrl = firstFileUrl(req, "idImg") || existingKyc?.idImgUrl;
   const selfieImgUrl = firstFileUrl(req, "selfie") || existingKyc?.selfieImgUrl;
-  const phone = String(req.body.phone || existingKyc?.phone || "").trim();
+  const phone = normalizePhone(req.body.phone || existingKyc?.phone || "");
 
   if (!idImgUrl || !selfieImgUrl) {
     throw httpError(

@@ -9,9 +9,10 @@ const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { normalizePhone } = require("../utils/phone");
 
 const privateFields =
-  "-passwordHash -refreshTokens -emailVerifyToken -resetPasswordToken -resetPasswordExpires";
+  "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires";
 
 exports.getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select(privateFields).populate("kycId");
@@ -25,6 +26,8 @@ exports.updateMe = asyncHandler(async (req, res) => {
   allowed.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = String(req.body[field]).trim();
   });
+
+  if (updates.phone !== undefined) updates.phone = normalizePhone(updates.phone);
 
   if (req.body.username !== undefined) {
     const username = String(req.body.username).trim().toLowerCase();
