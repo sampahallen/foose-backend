@@ -4,6 +4,7 @@ const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { softDeleteUser } = require("../utils/accountLifecycle");
 const { issueTokens, verifyRefreshToken } = require("../utils/generateToken");
 const { normalizePhone } = require("../utils/phone");
 const { sendEmail } = require("../services/emailService");
@@ -137,6 +138,23 @@ exports.login = asyncHandler(async (req, res) => {
     throw httpError(401, "Invalid credentials");
   }
 
+  const accountStatus = user.accountStatus || "active";
+
+  if (accountStatus === "deleted") {
+    throw httpError(410, "This account has been deleted");
+  }
+
+  if (accountStatus === "deactivated") {
+    if (user.scheduledDeletionAt && user.scheduledDeletionAt <= new Date()) {
+      await softDeleteUser(user);
+      throw httpError(410, "This deactivated account has been deleted after 30 days");
+    }
+
+    user.isEmailVerified = false;
+    await sendVerificationEmail(user);
+    throw httpError(403, "Account reactivation required. We sent a fresh sign-in link to your inbox.");
+  }
+
   if (!user.isEmailVerified) {
     await sendVerificationEmail(user);
     throw httpError(403, "Email verification required. We sent a fresh sign-in link to your inbox.");
@@ -212,8 +230,8 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
       emailVerifyToken: hashToken(req.params.token),
     },
     {
-      $set: { isEmailVerified: true },
-      $unset: { emailVerifyExpires: "", emailVerifyToken: "" },
+      $set: { accountStatus: "active", isEmailVerified: true },
+      $unset: { deactivatedAt: "", emailVerifyExpires: "", emailVerifyToken: "", scheduledDeletionAt: "" },
     },
     { new: true },
   ).select("+refreshTokens");

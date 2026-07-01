@@ -44,6 +44,19 @@ router.put(
   ),
   controller.changePassword,
 );
+router.post("/me/deactivate", auth, controller.deactivateMe);
+router.delete(
+  "/me",
+  auth,
+  validate(
+    z.object({
+      body: z.object({ confirmation: z.literal("DELETE") }),
+      params: z.object({}),
+      query: z.object({}),
+    }),
+  ),
+  controller.deleteMe,
+);
 router.get("/:username/follow", auth, controller.followStatus);
 router.post("/:username/follow", auth, controller.toggleFollow);
 router.get("/:username/profile", controller.getProfileByUsername);

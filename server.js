@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const connectDB = require("./src/config/db");
 const { connectRedis } = require("./src/config/redis");
 const { initSocket } = require("./src/config/socket");
+const { startAccountLifecycleCleanup } = require("./src/utils/accountLifecycle");
 
 const PORT = process.env.PORT || 5000;
 
@@ -22,6 +23,7 @@ const start = async () => {
   try {
     await connectDB();
     console.log("MongoDB connected");
+    startAccountLifecycleCleanup();
   } catch (error) {
     console.error("MongoDB connection failed:", error.message);
     // Don't crash - let the server run

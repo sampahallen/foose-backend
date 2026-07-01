@@ -63,6 +63,23 @@ const userSchema = new Schema(
     },
     emailVerifyToken: String,
     emailVerifyExpires: Date,
+    accountStatus: {
+      type: String,
+      enum: ["active", "deactivated", "deleted"],
+      default: "active",
+      index: true,
+    },
+    deactivatedAt: Date,
+    scheduledDeletionAt: Date,
+    deletedAt: Date,
+    deletedEmail: {
+      type: String,
+      select: false,
+    },
+    deletedUsername: {
+      type: String,
+      select: false,
+    },
     resetPasswordToken: String,
     resetPasswordExpires: Date,
     refreshTokens: {

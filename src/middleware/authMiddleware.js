@@ -30,13 +30,15 @@ const auth = asyncHandler(async (req, res, next) => {
   }
 
   const user = await User.findById(decoded.id).select(
-    "_id name email username phone role hasShop isKycVerified wallet kycId",
+    "_id name email username phone role hasShop isKycVerified wallet kycId accountStatus",
   );
 
-  if (!user) {
+  const accountStatus = user?.accountStatus || "active";
+
+  if (!user || accountStatus !== "active") {
     return res.status(401).json({
       success: false,
-      error: "User account was not found",
+      error: "User account is not active",
     });
   }
 

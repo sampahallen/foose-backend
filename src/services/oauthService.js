@@ -16,7 +16,16 @@ const cleanPath = (path) => {
   return value;
 };
 
-const clientUrl = () => (process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
+const isProduction = () => process.env.NODE_ENV === "production";
+
+const requirePublicUrl = (name, fallback) => {
+  const value = process.env[name]?.trim();
+  if (value) return value.replace(/\/$/, "");
+  if (!isProduction() && fallback) return fallback.replace(/\/$/, "");
+  throw httpError(503, `${name} must be configured with a deployed public URL`);
+};
+
+const clientUrl = () => requirePublicUrl("CLIENT_URL", "http://localhost:5173");
 
 const clientCallbackUrl = () => {
   if (process.env.CLIENT_AUTH_CALLBACK_URL?.trim()) return process.env.CLIENT_AUTH_CALLBACK_URL.trim();
@@ -24,8 +33,11 @@ const clientCallbackUrl = () => {
   return `${clientUrl()}${basePath}/auth/callback`;
 };
 
-const publicApiUrl = () =>
-  (process.env.API_PUBLIC_URL || process.env.SERVER_URL || `http://localhost:${process.env.PORT || 5000}`).replace(/\/$/, "");
+const publicApiUrl = () => {
+  const publicUrl = process.env.API_PUBLIC_URL?.trim() || process.env.SERVER_URL?.trim();
+  if (publicUrl) return publicUrl.replace(/\/$/, "");
+  return requirePublicUrl("API_PUBLIC_URL", `http://localhost:${process.env.PORT || 5000}`);
+};
 
 const redirectUri = (provider) => {
   const envKey = provider === "google" ? "GOOGLE_OAUTH_REDIRECT_URI" : "APPLE_OAUTH_REDIRECT_URI";

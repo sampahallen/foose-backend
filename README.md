@@ -18,9 +18,20 @@ MONGO_URI=your_mongodb_connection_string
 JWT_ACCESS_SECRET=dev_access_secret
 JWT_REFRESH_SECRET=dev_refresh_secret
 CLIENT_URL=http://localhost:5173
+API_PUBLIC_URL=http://localhost:8000
 ```
 
 `REDIS_URL`, AWS, Paystack, and SMTP settings are optional for local endpoint testing. When Redis is missing, cache and shared rate-limit features fall back gracefully.
+
+For deployment, set these public URLs so email verification links do not point to localhost:
+
+```env
+CLIENT_URL=https://your-frontend-domain.com
+CLIENT_AUTH_CALLBACK_URL=https://your-frontend-domain.com/auth/callback
+API_PUBLIC_URL=https://your-api-domain.com
+```
+
+If the frontend is deployed under a sub-path, set `CLIENT_BASE_PATH` or provide the full `CLIENT_AUTH_CALLBACK_URL`.
 
 3. Start the API:
 

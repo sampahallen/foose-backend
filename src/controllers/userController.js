@@ -9,10 +9,12 @@ const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { deactivateUser, softDeleteUser } = require("../utils/accountLifecycle");
 const { normalizePhone } = require("../utils/phone");
 
 const privateFields =
-  "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires";
+  "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -deletedEmail -deletedUsername";
+const activeAccountFilter = { $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }] };
 
 exports.getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select(privateFields).populate("kycId");
@@ -101,7 +103,7 @@ exports.getMyProfile = asyncHandler(async (req, res) => {
 });
 
 exports.getProfileByUsername = asyncHandler(async (req, res) => {
-  const user = await User.findOne({ username: req.params.username.toLowerCase() })
+  const user = await User.findOne({ ...activeAccountFilter, username: req.params.username.toLowerCase() })
     .select("name username bio profilePhoto location isKycVerified hasShop following createdAt")
     .lean();
 
@@ -113,7 +115,7 @@ exports.getProfileByUsername = asyncHandler(async (req, res) => {
 });
 
 exports.toggleFollow = asyncHandler(async (req, res) => {
-  const target = await User.findOne({ username: req.params.username.toLowerCase() }).select("_id username");
+  const target = await User.findOne({ ...activeAccountFilter, username: req.params.username.toLowerCase() }).select("_id username");
   if (!target) throw httpError(404, "User not found");
 
   if (target._id.toString() === req.user.id) {
@@ -146,7 +148,7 @@ exports.toggleFollow = asyncHandler(async (req, res) => {
 });
 
 exports.followStatus = asyncHandler(async (req, res) => {
-  const target = await User.findOne({ username: req.params.username.toLowerCase() }).select("_id");
+  const target = await User.findOne({ ...activeAccountFilter, username: req.params.username.toLowerCase() }).select("_id");
   if (!target) throw httpError(404, "User not found");
 
   const [followingRecord, followerCount] = await Promise.all([
@@ -173,8 +175,42 @@ exports.changePassword = asyncHandler(async (req, res) => {
   return success(res, {}, "Password changed");
 });
 
+exports.deactivateMe = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id).select("+refreshTokens");
+
+  if (!user || user.accountStatus === "deleted") {
+    throw httpError(404, "User not found");
+  }
+
+  await deactivateUser(user);
+
+  return success(
+    res,
+    {
+      scheduledDeletionAt: user.scheduledDeletionAt,
+    },
+    "Account deactivated. Log in and reverify within 30 days to reactivate it.",
+  );
+});
+
+exports.deleteMe = asyncHandler(async (req, res) => {
+  if (req.body.confirmation !== "DELETE") {
+    throw httpError(400, "Type DELETE to confirm account deletion");
+  }
+
+  const user = await User.findById(req.user.id).select("+refreshTokens +deletedEmail +deletedUsername");
+
+  if (!user || user.accountStatus === "deleted") {
+    throw httpError(404, "User not found");
+  }
+
+  await softDeleteUser(user);
+
+  return success(res, {}, "Account deleted");
+});
+
 exports.getPublicProfile = asyncHandler(async (req, res) => {
-  const user = await User.findOne({ username: req.params.username.toLowerCase() })
+  const user = await User.findOne({ ...activeAccountFilter, username: req.params.username.toLowerCase() })
     .select("name username bio profilePhoto location isKycVerified hasShop following createdAt")
     .populate("kycId", "status");
 
