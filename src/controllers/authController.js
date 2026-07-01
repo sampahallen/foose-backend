@@ -15,6 +15,7 @@ const {
   getAppleProfile,
   getGoogleProfile,
   googleAuthorizationUrl,
+  clientUrl,
   publicApiUrl,
   readState,
 } = require("../services/oauthService");
@@ -39,6 +40,13 @@ const hashToken = (token) => crypto.createHash("sha256").update(String(token)).d
 const verificationLink = (token) => `${publicApiUrl()}/api/auth/verify-email/${encodeURIComponent(token)}`;
 
 const callbackUrlWithParams = (params) => `${clientCallbackUrl()}#${params.toString()}`;
+
+const clientPathUrl = (path) => {
+  const basePath = (process.env.CLIENT_BASE_PATH || "").trim().replace(/^\/?/, "/").replace(/\/$/, "");
+  return `${clientUrl()}${basePath}${path}`;
+};
+
+const loginUrlWithParams = (params) => `${clientPathUrl("/")}#/login?${params.toString()}`;
 
 const wantsBrowserRedirect = (req) => req.accepts(["html", "json"]) === "html";
 
@@ -240,16 +248,19 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
     if (wantsBrowserRedirect(req)) {
       const params = new URLSearchParams({
         error: "Verification link is invalid or expired",
-        redirect: "/login",
       });
-      return res.redirect(callbackUrlWithParams(params));
+      return res.redirect(loginUrlWithParams(params));
     }
 
     throw httpError(400, "Invalid email verification token");
   }
 
   if (wantsBrowserRedirect(req)) {
-    return sendAuthRedirect(res, user);
+    const params = new URLSearchParams({
+      email: user.email,
+      verified: "1",
+    });
+    return res.redirect(loginUrlWithParams(params));
   }
 
   const tokens = issueTokens(user);

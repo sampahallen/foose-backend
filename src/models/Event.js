@@ -16,6 +16,7 @@ const eventSchema = new Schema(
     description: {
       type: String,
       trim: true,
+      maxlength: 60,
       default: "",
     },
     date: {

@@ -11,7 +11,7 @@ const eventTypes = ["online-pop-up", "in-person-pop-up", "online", "pop-up", "fa
 
 const eventBody = z.object({
   title: z.string().min(2).optional(),
-  description: z.string().optional(),
+  description: z.string().max(60).optional(),
   date: z.string().min(1).optional(),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
