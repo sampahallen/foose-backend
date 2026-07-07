@@ -1,4 +1,5 @@
 const User = require("../models/User");
+const { normalizeRoles } = require("../constants/roles");
 const asyncHandler = require("../utils/asyncHandler");
 const { verifyAccessToken } = require("../utils/generateToken");
 
@@ -30,7 +31,7 @@ const auth = asyncHandler(async (req, res, next) => {
   }
 
   const user = await User.findById(decoded.id).select(
-    "_id name email username phone role hasShop isKycVerified wallet kycId accountStatus",
+    "_id name email username phone roles role hasShop isKycVerified wallet kycId accountStatus",
   );
 
   const accountStatus = user?.accountStatus || "active";
@@ -44,7 +45,7 @@ const auth = asyncHandler(async (req, res, next) => {
 
   req.user = {
     id: user._id.toString(),
-    role: user.role,
+    roles: normalizeRoles(user.roles, user.role),
     hasShop: Boolean(user.hasShop),
     isKycVerified: Boolean(user.isKycVerified),
     email: user.email,

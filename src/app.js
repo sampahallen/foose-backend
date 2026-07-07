@@ -15,6 +15,8 @@ const favoriteRoutes = require("./routes/favoriteRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const analyticsRoutes = require("./routes/analyticsRoutes");
+const SiteAnalyticsEvent = require("./models/SiteAnalyticsEvent");
 const { generalLimiter } = require("./middleware/rateLimitMiddleware");
 const { success, error } = require("./utils/apiResponse");
 
@@ -55,6 +57,7 @@ app.use("/api/community", communityRoutes);
 app.use("/api/favorites", favoriteRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/analytics", analyticsRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.use((req, res) => {
@@ -79,6 +82,24 @@ app.use((err, req, res, next) => {
   }
 
   const statusCode = err.statusCode || err.status || 500;
+  if (statusCode >= 500) {
+    void SiteAnalyticsEvent.create({
+      endpoint: req.originalUrl,
+      message: err.message || "Server Error",
+      metadata: {
+        code: err.code,
+        name: err.name,
+      },
+      method: req.method,
+      path: req.originalUrl,
+      severity: "critical",
+      source: "backend",
+      statusCode,
+      type: "api_failure",
+      userAgent: req.get("user-agent") || "",
+    }).catch(() => undefined);
+  }
+
   return error(res, err.message || "Server Error", statusCode, err.details);
 });
 

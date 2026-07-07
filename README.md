@@ -54,7 +54,7 @@ Recommended order:
 1. `01-auth.http`
 2. `02-users.http`
 3. `03-kyc.http`
-4. Approve KYC with `13-admin.http` using an admin account
+4. Approve KYC with `13-admin.http` using a KYC reviewer or super admin account
 5. `04-digishops.http`
 6. `05-listings.http`
 7. Continue through orders, payments, reviews, community, chat, and notifications
@@ -77,4 +77,4 @@ For upload requests, replace sample file paths such as `C:\Users\User\Pictures\i
 - Protected routes need `Authorization: Bearer {{accessToken}}`.
 - KYC and payment state are intentionally not cached.
 - DigiShop creation requires approved KYC.
-- Admin routes require a user with `role: "admin"` in MongoDB.
+- User roles are stored in the embedded `roles` object. Use `src/constants/roles.js` for role keys, codes, and dot paths; for example, super admin is `roles.superAdmin = USER_ROLES.SUPER_ADMIN`.

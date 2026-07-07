@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { ROLE_KEYS, USER_ROLES, normalizeRoles } = require("../constants/roles");
 const { Schema } = mongoose;
 
 const userSchema = new Schema(
@@ -52,10 +53,28 @@ const userSchema = new Schema(
         default: "",
       },
     },
-    role: {
-      type: String,
-      enum: ["user", "admin"],
-      default: "user",
+    roles: {
+      [ROLE_KEYS.STANDARD_USER]: {
+        type: Number,
+        enum: [USER_ROLES.STANDARD_USER],
+        default: USER_ROLES.STANDARD_USER,
+      },
+      [ROLE_KEYS.KYC_REVIEWER]: {
+        type: Number,
+        enum: [USER_ROLES.KYC_REVIEWER],
+      },
+      [ROLE_KEYS.COMMUNITY_MODERATOR]: {
+        type: Number,
+        enum: [USER_ROLES.COMMUNITY_MODERATOR],
+      },
+      [ROLE_KEYS.DISPUTE_RESOLVER]: {
+        type: Number,
+        enum: [USER_ROLES.DISPUTE_RESOLVER],
+      },
+      [ROLE_KEYS.SUPER_ADMIN]: {
+        type: Number,
+        enum: [USER_ROLES.SUPER_ADMIN],
+      },
     },
     isEmailVerified: {
       type: Boolean,
@@ -143,5 +162,10 @@ const userSchema = new Schema(
   },
   { timestamps: true },
 );
+
+userSchema.pre("init", (document) => {
+  document.roles = normalizeRoles(document.roles, document.role);
+  delete document.role;
+});
 
 module.exports = mongoose.model("User", userSchema);

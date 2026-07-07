@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { normalizeRoles } = require("../constants/roles");
 
 const accessSecret = () =>
   process.env.JWT_ACCESS_SECRET ||
@@ -16,7 +17,7 @@ const signAccessToken = (user) => {
       id: user._id.toString(),
       hasShop: Boolean(user.hasShop),
       isKycVerified: Boolean(user.isKycVerified),
-      role: user.role || "user",
+      roles: normalizeRoles(user.roles, user.role),
     },
     accessSecret(),
     { expiresIn: process.env.JWT_ACCESS_EXPIRES || "3d" },

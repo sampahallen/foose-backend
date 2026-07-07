@@ -1,20 +1,106 @@
 const express = require("express");
 const { z } = require("zod");
+const { STAFF_ROLE_KEYS } = require("../constants/roles");
 const controller = require("../controllers/adminController");
 const auth = require("../middleware/authMiddleware");
-const { isAdmin } = require("../middleware/roleMiddleware");
+const {
+  canResolveDisputes,
+  canReviewKyc,
+  isSuperAdmin,
+} = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
 
 const router = express.Router();
 
-router.use(auth, isAdmin);
+router.use(auth);
 
-router.get("/stats", controller.stats);
-router.get("/kyc/pending", controller.pendingKyc);
-router.get("/kyc/:kycId", controller.getKyc);
-router.put("/kyc/:kycId/approve", controller.approveKyc);
+router.get("/stats", isSuperAdmin, controller.stats);
+router.get(
+  "/analytics",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.object({}).optional().default({}),
+      params: z.object({}),
+      query: z.object({
+        days: z.enum(["7", "14", "30"]).optional(),
+      }),
+    }),
+  ),
+  controller.analytics,
+);
+router.get(
+  "/users",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.object({}).optional().default({}),
+      params: z.object({}),
+      query: z.object({
+        limit: z.string().optional(),
+        page: z.string().optional(),
+        search: z.string().max(120).optional(),
+      }),
+    }),
+  ),
+  controller.users,
+);
+router.put(
+  "/users/:userId/roles/:roleKey",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.object({}).optional().default({}),
+      params: z.object({
+        roleKey: z.enum([...STAFF_ROLE_KEYS]),
+        userId: z.string().min(1),
+      }),
+      query: z.object({}),
+    }),
+  ),
+  controller.promoteUser,
+);
+router.delete(
+  "/users/:userId/roles/:roleKey",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: z.object({
+        roleKey: z.enum([...STAFF_ROLE_KEYS]),
+        userId: z.string().min(1),
+      }),
+      query: z.object({}),
+    }),
+  ),
+  controller.demoteUser,
+);
+router.get("/kyc/pending", canReviewKyc, controller.pendingKyc);
+router.get(
+  "/kyc/approved",
+  canReviewKyc,
+  validate(
+    z.object({
+      body: z.object({}).optional().default({}),
+      params: z.object({}),
+      query: z.object({
+        idType: z.enum(["Ghana Card", "Passport", "Driving License"]).optional(),
+        limit: z.string().optional(),
+        page: z.string().optional(),
+        phoneVerified: z.enum(["true", "false"]).optional(),
+        reviewedWithin: z.enum(["7", "30", "90"]).optional(),
+        search: z.string().max(120).optional(),
+        sort: z.enum(["newest", "oldest"]).optional(),
+      }),
+    }),
+  ),
+  controller.approvedKyc,
+);
+router.get("/kyc/:kycId", canReviewKyc, controller.getKyc);
+router.put("/kyc/:kycId/approve", canReviewKyc, controller.approveKyc);
 router.put(
   "/kyc/:kycId/reject",
+  canReviewKyc,
   validate(
     z.object({
       body: z.object({ reason: z.string().min(2) }),
@@ -24,11 +110,12 @@ router.put(
   ),
   controller.rejectKyc,
 );
-router.get("/listings/flagged", controller.flaggedListings);
-router.delete("/listings/:id", controller.removeListing);
-router.get("/disputes", controller.disputes);
+router.get("/listings/flagged", isSuperAdmin, controller.flaggedListings);
+router.delete("/listings/:id", isSuperAdmin, controller.removeListing);
+router.get("/disputes", canResolveDisputes, controller.disputes);
 router.put(
   "/disputes/:orderId/resolve",
+  canResolveDisputes,
   validate(
     z.object({
       body: z.object({ resolveFor: z.enum(["seller", "buyer"]) }),

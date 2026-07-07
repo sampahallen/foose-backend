@@ -1,6 +1,7 @@
 const { Server } = require("socket.io");
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { createClient } = require("redis");
+const { normalizeRoles } = require("../constants/roles");
 const { verifyAccessToken } = require("../utils/generateToken");
 const registerChatSocket = require("../socket/chatSocket");
 
@@ -41,6 +42,8 @@ const initSocket = (httpServer) => {
       }
 
       socket.user = verifyAccessToken(token);
+      socket.user.roles = normalizeRoles(socket.user.roles, socket.user.role);
+      delete socket.user.role;
       next();
     } catch {
       next(new Error("Invalid socket token"));
