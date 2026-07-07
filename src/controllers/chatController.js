@@ -69,6 +69,16 @@ const messagePopulate = (userSelect = "name username profilePhoto") => [
   },
 ];
 
+function emitChatEvent(room, event, payload) {
+  try {
+    const { getIO } = require("../config/socket");
+    const io = typeof getIO === "function" ? getIO() : null;
+    if (io) io.to(room.toString()).emit(event, payload);
+  } catch {
+    // Realtime delivery is best-effort; REST still returns the saved message.
+  }
+}
+
 exports.listConversations = asyncHandler(async (req, res) => {
   const { page, limit, skip } = pageOptions(req.query, 40);
   const userObjectId = new mongoose.Types.ObjectId(req.user.id);
@@ -241,6 +251,11 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     link: `/inbox?conversationId=${encodeURIComponent(conversationId)}`,
   });
 
+  const realtimePayload = { conversationId, message };
+  emitChatEvent(receiverId, "new_message", realtimePayload);
+  emitChatEvent(conversationId, "conversation_message", realtimePayload);
+  emitChatEvent(req.user.id, "conversation_message", realtimePayload);
+
   return success(res, { conversationId, message }, "Message sent", 201);
 });
 
@@ -252,6 +267,20 @@ exports.markRead = asyncHandler(async (req, res) => {
     },
     { isRead: true },
   );
+
+  const participants = parseConversationParticipants(req.params.conversationId) || [];
+  emitChatEvent(req.user.id, "messages_read", {
+    conversationId: req.params.conversationId,
+    readBy: req.user.id,
+  });
+  participants
+    .filter((participantId) => participantId !== req.user.id)
+    .forEach((participantId) => {
+      emitChatEvent(participantId, "messages_read", {
+        conversationId: req.params.conversationId,
+        readBy: req.user.id,
+      });
+    });
 
   return success(res, {}, "Messages marked as read");
 });
