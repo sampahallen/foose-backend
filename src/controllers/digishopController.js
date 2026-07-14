@@ -5,7 +5,7 @@ const httpError = require("../utils/httpError");
 const slugify = require("../utils/slugify");
 const { success } = require("../utils/apiResponse");
 const { sendDigiShopWelcomeEmail } = require("../services/emailService");
-const { withCache, invalidate } = require("../utils/cache");
+const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
 const { normalizePhone } = require("../utils/phone");
 
 const firstFileUrl = (req, ...fieldNames) => {
@@ -24,6 +24,11 @@ const payoutMethodFromBody = (body) => ({
   accountNumber: normalizePhone(body.payoutAccountNumber || ""),
   bankName: body.payoutBankName || "",
   branch: body.payoutBranch || "",
+});
+
+const shopLocationFromBody = (body, currentLocation = {}) => ({
+  city: body.city !== undefined ? body.city : currentLocation.city || "",
+  region: body.region !== undefined ? body.region : currentLocation.region || "",
 });
 
 const makeUniqueSlug = async (shopName) => {
@@ -55,6 +60,7 @@ exports.createShop = asyncHandler(async (req, res) => {
     logoUrl: firstFileUrl(req, "logo", "logoImage"),
     bannerUrl: firstFileUrl(req, "banner", "bannerImage"),
     category: req.body.category || "both",
+    location: shopLocationFromBody(req.body),
     socialLinks: {
       instagram: req.body.instagram || "",
       whatsapp: req.body.whatsapp || "",
@@ -101,6 +107,9 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   if (req.body.whatsapp !== undefined) {
     shop.socialLinks.whatsapp = req.body.whatsapp;
   }
+  if (req.body.city !== undefined || req.body.region !== undefined) {
+    shop.location = shopLocationFromBody(req.body, shop.location);
+  }
   [
     "payoutMethodType",
     "payoutAccountName",
@@ -122,7 +131,8 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   });
 
   await shop.save();
-  await invalidate(`shop:${shop.slug}`);
+  await invalidate(`shop:${shop.slug}`, "listings:featured");
+  await invalidatePattern("search:*");
 
   return success(res, { shop }, "DigiShop updated");
 });

@@ -3,10 +3,20 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 
+const emitNotificationRead = (userId, payload) => {
+  try {
+    const { getIO } = require("../config/socket");
+    const io = typeof getIO === "function" ? getIO() : null;
+    if (io) io.to(userId.toString()).emit("notification-read", payload);
+  } catch {
+    // REST state is authoritative; realtime read updates are best-effort.
+  }
+};
+
 exports.listNotifications = asyncHandler(async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
-  const filter = { userId: req.user.id };
+  const filter = { userId: req.user.id, type: { $ne: "chat" } };
 
   if (req.query.isRead !== undefined) {
     filter.isRead = req.query.isRead === "true";
@@ -37,10 +47,16 @@ exports.markRead = asyncHandler(async (req, res) => {
 
   if (!notification) throw httpError(404, "Notification not found");
 
+  emitNotificationRead(req.user.id, {
+    notification,
+    notificationId: notification._id,
+  });
+
   return success(res, { notification }, "Notification marked as read");
 });
 
 exports.markAllRead = asyncHandler(async (req, res) => {
   await Notification.updateMany({ userId: req.user.id }, { isRead: true });
+  emitNotificationRead(req.user.id, { all: true });
   return success(res, {}, "All notifications marked as read");
 });

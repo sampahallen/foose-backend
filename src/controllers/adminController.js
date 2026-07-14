@@ -302,6 +302,31 @@ exports.analytics = asyncHandler(async (req, res) => {
   );
 });
 
+exports.createAnnouncement = asyncHandler(async (req, res) => {
+  const title = String(req.body.title || "").trim();
+  const body = String(req.body.body || "").trim();
+  const link = String(req.body.link || "").trim();
+  const users = await User.find({
+    $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }],
+  })
+    .select("_id")
+    .lean();
+
+  await Promise.all(
+    users.map((user) =>
+      createNotification({
+        userId: user._id,
+        type: "system",
+        title,
+        body,
+        link,
+      }),
+    ),
+  );
+
+  return success(res, { count: users.length }, "Announcement sent", 201);
+});
+
 exports.users = asyncHandler(async (req, res) => {
   const page = positiveInt(req.query.page, 1, 100000);
   const limit = positiveInt(req.query.limit, 20, 50);
@@ -513,8 +538,10 @@ exports.rejectKyc = asyncHandler(async (req, res) => {
   const kyc = await KYC.findById(req.params.kycId).populate("userId");
   if (!kyc) throw httpError(404, "KYC record not found");
 
+  const rejectionReason = String(req.body.reason || "").trim();
+
   kyc.status = "rejected";
-  kyc.rejectionReason = req.body.reason;
+  kyc.rejectionReason = rejectionReason;
   kyc.reviewedAt = new Date();
   kyc.reviewedBy = req.user.id;
   await kyc.save();
@@ -525,12 +552,12 @@ exports.rejectKyc = asyncHandler(async (req, res) => {
     { new: true },
   );
 
-  await sendKycRejectedEmail(user, req.body.reason);
+  await sendKycRejectedEmail(user, rejectionReason);
   await createNotification({
     userId: user._id,
     type: "kyc",
     title: "KYC rejected",
-    body: req.body.reason,
+    body: rejectionReason || "Your KYC submission was rejected. Please review your details and resubmit.",
     link: "/account/kyc",
   });
 

@@ -13,6 +13,7 @@ const createNotification = async ({ userId, type, title, body, link }) => {
   const io = typeof getIO === "function" ? getIO() : null;
   if (io) {
     io.to(userId.toString()).emit("notification", notification);
+    io.to(userId.toString()).emit("new-notification", notification);
   }
 
   return notification;

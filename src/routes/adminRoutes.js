@@ -29,6 +29,22 @@ router.get(
   ),
   controller.analytics,
 );
+router.post(
+  "/announcements",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.object({
+        body: z.string().trim().max(1000).optional().default(""),
+        link: z.string().trim().max(500).optional().default(""),
+        title: z.string().trim().min(3).max(120),
+      }).strict(),
+      params: z.object({}),
+      query: z.object({}),
+    }),
+  ),
+  controller.createAnnouncement,
+);
 router.get(
   "/users",
   isSuperAdmin,
@@ -103,7 +119,7 @@ router.put(
   canReviewKyc,
   validate(
     z.object({
-      body: z.object({ reason: z.string().min(2) }),
+      body: z.object({ reason: z.string().trim().max(1000).optional().default("") }).optional().default({}),
       params: z.object({ kycId: z.string().min(1) }),
       query: z.object({}),
     }),

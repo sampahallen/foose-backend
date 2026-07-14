@@ -7,7 +7,7 @@ const { success } = require("../utils/apiResponse");
 const { softDeleteUser } = require("../utils/accountLifecycle");
 const { issueTokens, verifyRefreshToken } = require("../utils/generateToken");
 const { normalizePhone } = require("../utils/phone");
-const { sendEmail } = require("../services/emailService");
+const { sendEmail, sendPasswordResetEmail } = require("../services/emailService");
 const {
   appleAuthorizationUrl,
   clientCallbackUrl,
@@ -21,6 +21,7 @@ const {
 } = require("../services/oauthService");
 
 const EMAIL_VERIFY_TOKEN_TTL_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 const userFields = "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -authProviders";
 
@@ -38,6 +39,46 @@ const makeToken = () => crypto.randomBytes(32).toString("hex");
 const hashToken = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
 
 const verificationLink = (token) => `${publicApiUrl()}/api/auth/verify-email/${encodeURIComponent(token)}`;
+
+const passwordResetSigningSecret = () =>
+  process.env.PASSWORD_RESET_SECRET ||
+  process.env.JWT_ACCESS_SECRET ||
+  process.env.ACCESS_TOKEN_SECRET ||
+  "development_password_reset_secret";
+
+const passwordResetSignature = ({ expiresAt, passwordHash, userId }) =>
+  crypto
+    .createHmac("sha256", passwordResetSigningSecret())
+    .update(`${userId}.${expiresAt}.${passwordHash}`)
+    .digest("base64url");
+
+const makePasswordResetToken = (user) => {
+  const userId = user._id.toString();
+  const expiresAt = Date.now() + PASSWORD_RESET_TOKEN_TTL_MS;
+  const signature = passwordResetSignature({ expiresAt, passwordHash: user.passwordHash, userId });
+  return `${userId}.${expiresAt}.${signature}`;
+};
+
+const passwordResetLink = (token) => `${clientPathUrl("/")}#/reset-password/${encodeURIComponent(token)}`;
+
+const safeTokenEqual = (left, right) => {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const findUserByPasswordResetToken = async (token) => {
+  const [userId, expiresAtRaw, signature] = String(token || "").split(".");
+  const expiresAt = Number(expiresAtRaw);
+
+  if (!userId || !Number.isFinite(expiresAt) || !signature || expiresAt <= Date.now()) return null;
+
+  const user = await User.findById(userId).select("+passwordHash +refreshTokens");
+  if (!user || user.accountStatus === "deleted") return null;
+
+  const expectedSignature = passwordResetSignature({ expiresAt, passwordHash: user.passwordHash, userId });
+  return safeTokenEqual(signature, expectedSignature) ? user : null;
+};
 
 const callbackUrlWithParams = (params) => `${clientCallbackUrl()}#${params.toString()}`;
 
@@ -272,29 +313,21 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
 });
 
 exports.forgotPassword = asyncHandler(async (req, res) => {
-  const user = await User.findOne({ email: req.body.email.toLowerCase() });
+  const user = await User.findOne({
+    accountStatus: { $ne: "deleted" },
+    email: req.body.email.toLowerCase(),
+  }).select("+passwordHash");
 
   if (user) {
-    const resetToken = makeToken();
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000);
-    await user.save();
-
-    await sendEmail({
-      to: user.email,
-      subject: "Reset your ThriftGH password",
-      text: `Use this token to reset your password: ${resetToken}`,
-    });
+    const resetToken = makePasswordResetToken(user);
+    await sendPasswordResetEmail(user, passwordResetLink(resetToken));
   }
 
   return success(res, {}, "If the email exists, a reset link has been sent");
 });
 
 exports.resetPassword = asyncHandler(async (req, res) => {
-  const user = await User.findOne({
-    resetPasswordToken: req.params.token,
-    resetPasswordExpires: { $gt: new Date() },
-  }).select("+passwordHash");
+  const user = await findUserByPasswordResetToken(req.params.token);
 
   if (!user) {
     throw httpError(400, "Invalid or expired reset token");

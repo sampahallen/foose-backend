@@ -12,6 +12,8 @@ const shopBody = z.object({
   shopName: z.string().min(2).optional(),
   bio: z.string().optional(),
   category: z.enum(["retail", "wholesale", "both"]).optional(),
+  city: z.string().trim().min(2).optional(),
+  region: z.string().trim().min(2).optional(),
   instagram: z.string().optional(),
   whatsapp: z.string().optional(),
   payoutMethodType: z.enum(["mobile_money", "bank_transfer"]).optional(),
@@ -29,7 +31,11 @@ router.post(
   ...shopImages,
   validate(
     z.object({
-      body: shopBody.extend({ shopName: z.string().min(2) }),
+      body: shopBody.extend({
+        shopName: z.string().trim().min(2),
+        city: z.string().trim().min(2),
+        region: z.string().trim().min(2),
+      }),
       params: z.object({}),
       query: z.object({}),
     }),

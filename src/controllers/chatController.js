@@ -1,9 +1,9 @@
 const mongoose = require("mongoose");
 const Message = require("../models/Message");
+const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const { success } = require("../utils/apiResponse");
 const httpError = require("../utils/httpError");
-const { createNotification } = require("../services/notificationService");
 
 const makeConversationId = ({ userA, userB }) => {
   return `${[userA.toString(), userB.toString()].sort().join("_")}_general`;
@@ -159,6 +159,10 @@ exports.listConversations = asyncHandler(async (req, res) => {
 exports.listConversation = asyncHandler(async (req, res) => {
   const { page, limit, skip } = pageOptions(req.query, 30);
   const filter = participantFilter(req.params.conversationId, req.user.id);
+  const participants = parseConversationParticipants(req.params.conversationId);
+  const participantId = participants?.includes(req.user.id)
+    ? participants.find((id) => id !== req.user.id)
+    : null;
   const [messages, total] = await Promise.all([
     Message.find(filter)
       .sort({ createdAt: -1 })
@@ -173,10 +177,13 @@ exports.listConversation = asyncHandler(async (req, res) => {
     : "name username profilePhoto";
 
   await Message.populate(messages, messagePopulate(userSelect));
+  const participant = participantId
+    ? await User.findById(participantId).select("name username profilePhoto").lean()
+    : null;
 
   return success(
     res,
-    { contactVisible: hasProductContext, messages, total, page, pages: Math.ceil(total / limit) },
+    { contactVisible: hasProductContext, messages, participant, total, page, pages: Math.ceil(total / limit) },
     "Conversation loaded",
   );
 });
@@ -243,18 +250,9 @@ exports.sendMessage = asyncHandler(async (req, res) => {
 
   await message.populate(messagePopulate(listingId ? "name username profilePhoto phone" : "name username profilePhoto"));
 
-  await createNotification({
-    userId: receiverId,
-    type: "chat",
-    title: "New message",
-    body: content || `${attachments.length} attachment${attachments.length === 1 ? "" : "s"}`,
-    link: `/inbox?conversationId=${encodeURIComponent(conversationId)}`,
-  });
-
   const realtimePayload = { conversationId, message };
-  emitChatEvent(receiverId, "new_message", realtimePayload);
-  emitChatEvent(conversationId, "conversation_message", realtimePayload);
-  emitChatEvent(req.user.id, "conversation_message", realtimePayload);
+  emitChatEvent(receiverId, "new-message", realtimePayload);
+  emitChatEvent(req.user.id, "message-confirmed", realtimePayload);
 
   return success(res, { conversationId, message }, "Message sent", 201);
 });

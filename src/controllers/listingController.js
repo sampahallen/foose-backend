@@ -105,7 +105,7 @@ exports.listListings = asyncHandler(async (req, res) => {
 
   const [results, total] = await Promise.all([
     Listing.find(filter)
-      .populate("shopId", "shopName slug rating totalReviews")
+      .populate("shopId", "shopName slug rating totalReviews location")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -123,7 +123,7 @@ exports.getListing = asyncHandler(async (req, res) => {
 
   const listing = await withCache(`listing:${req.params.id}`, 600, () =>
     Listing.findOne({ _id: req.params.id, status: { $ne: "removed" } })
-      .populate("shopId", "shopName slug rating totalReviews ownerId")
+      .populate("shopId", "shopName slug rating totalReviews ownerId location")
       .lean(),
   );
 
@@ -141,7 +141,7 @@ exports.getShopListings = asyncHandler(async (req, res) => {
       status: "active",
       visibility: { $ne: "event" },
     })
-      .populate("shopId", "shopName slug rating totalReviews")
+      .populate("shopId", "shopName slug rating totalReviews location")
       .sort({ createdAt: -1 })
       .lean(),
   );
@@ -179,7 +179,7 @@ exports.createListing = asyncHandler(async (req, res) => {
   });
 
   await invalidate("listings:featured", `shop:${shop._id}:listings`);
-  await invalidatePattern("search:top-picks:*");
+  await invalidatePattern("search:*");
 
   return success(res, { listing }, "Listing created", 201);
 });
@@ -203,7 +203,7 @@ exports.updateListing = asyncHandler(async (req, res) => {
     `listing:${listing._id}`,
     `shop:${shop._id}:listings`,
   );
-  await invalidatePattern("search:top-picks:*");
+  await invalidatePattern("search:*");
 
   return success(res, { listing }, "Listing updated");
 });
@@ -227,7 +227,7 @@ exports.deleteListing = asyncHandler(async (req, res) => {
     `listing:${listing._id}`,
     `shop:${shop._id}:listings`,
   );
-  await invalidatePattern("search:top-picks:*");
+  await invalidatePattern("search:*");
 
   return success(res, { listing }, "Listing removed");
 });

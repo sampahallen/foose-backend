@@ -11,6 +11,70 @@ const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$
 const TOP_PICK_TAG = "top-pick";
 
 const normalizeSearchText = (value) => String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+const SHOP_LISTING_FIELDS = "shopName slug rating totalReviews ownerId location";
+
+const shopLocationLabel = (shop) => [shop?.location?.city, shop?.location?.region]
+  .map((part) => String(part || "").trim())
+  .filter(Boolean)
+  .join(", ");
+
+const shopLocationMatches = (shop, value) => {
+  const normalizedValue = normalizeSearchText(value);
+  if (!normalizedValue) return false;
+
+  return [
+    shopLocationLabel(shop),
+    shop?.location?.city,
+    shop?.location?.region,
+  ].some((part) => normalizeSearchText(part) === normalizedValue);
+};
+
+const shopLocationQuery = () => ({
+  isLive: true,
+  $or: [
+    { "location.city": { $exists: true, $ne: "" } },
+    { "location.region": { $exists: true, $ne: "" } },
+  ],
+});
+
+const shopIdsForLocation = async (location) => {
+  if (!normalizeSearchText(location)) return null;
+
+  const shops = await DigiShop.find(shopLocationQuery())
+    .select("_id location")
+    .lean();
+
+  return shops
+    .filter((shop) => shopLocationMatches(shop, location))
+    .map((shop) => shop._id);
+};
+
+const listingLocationOptions = async (filter) => {
+  const shopIds = await Listing.distinct("shopId", filter);
+
+  if (!shopIds.length) return [];
+
+  const shops = await DigiShop.find({
+    ...shopLocationQuery(),
+    _id: { $in: shopIds },
+  })
+    .select("location")
+    .lean();
+
+  const optionsByValue = new Map();
+
+  shops.forEach((shop) => {
+    const label = shopLocationLabel(shop);
+    const value = label;
+
+    if (label) {
+      optionsByValue.set(normalizeSearchText(value), { label, value });
+    }
+  });
+
+  return Array.from(optionsByValue.values())
+    .sort((first, second) => first.label.localeCompare(second.label));
+};
 
 const startOfMarketplaceWeek = (value = new Date()) => {
   const start = new Date(value);
@@ -74,6 +138,12 @@ const listingSearchData = async (query, baseFilter = {}) => {
     if (query.maxPrice) filter.price.$lte = Number(query.maxPrice);
   }
 
+  const locationOptionsFilter = { ...filter };
+  if (query.location) {
+    const matchingShopIds = await shopIdsForLocation(query.location);
+    filter.shopId = { $in: matchingShopIds || [] };
+  }
+
   const sortOptions = {
     newest: { createdAt: -1 },
     price_asc: { price: 1 },
@@ -82,14 +152,15 @@ const listingSearchData = async (query, baseFilter = {}) => {
   };
   const sort = sortOptions[query.sort] || sortOptions.newest;
 
-  const [results, total] = await Promise.all([
+  const [results, total, locations] = await Promise.all([
     Listing.find(filter)
       .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
-      .populate("shopId", "shopName slug rating totalReviews ownerId")
+      .populate("shopId", SHOP_LISTING_FIELDS)
       .lean(),
     Listing.countDocuments(filter),
+    listingLocationOptions(locationOptionsFilter),
   ]);
 
   return {
@@ -97,6 +168,9 @@ const listingSearchData = async (query, baseFilter = {}) => {
     total,
     page,
     pages: Math.ceil(total / limit),
+    filters: {
+      locations,
+    },
   };
 };
 
@@ -123,7 +197,7 @@ exports.getFeatured = asyncHandler(async (req, res) => {
     Listing.find({ status: "active", visibility: { $ne: "event" } })
       .sort({ views: -1, createdAt: -1 })
       .limit(12)
-      .populate("shopId", "shopName slug rating totalReviews ownerId")
+      .populate("shopId", SHOP_LISTING_FIELDS)
       .lean(),
   );
 

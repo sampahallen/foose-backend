@@ -33,6 +33,18 @@ const digishopSchema = new Schema(
       enum: ["retail", "wholesale", "both"],
       default: "both",
     },
+    location: {
+      city: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      region: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+    },
     isLive: {
       type: Boolean,
       default: true,
