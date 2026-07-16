@@ -15,6 +15,7 @@ const {
 } = require("../services/paystackService");
 const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
+const { awardPurchaseForOrder } = require("../services/recommendationService");
 
 const orderPopulate = [
   { path: "shopId", select: "ownerId shopName slug" },
@@ -108,6 +109,17 @@ const markOrderPaid = async (order, reference, paymentMethod, buyer) => {
   order.escrowStatus = "held";
   order.sellerActionDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000);
   await order.save();
+
+  const recommendationOrder = await Order.findOneAndUpdate(
+    { _id: order._id, recommendationAwardedAt: { $exists: false } },
+    { $set: { recommendationAwardedAt: new Date() } },
+    { new: true },
+  ).lean();
+  if (recommendationOrder) {
+    await awardPurchaseForOrder(recommendationOrder).catch((error) => {
+      console.warn(`Purchase recommendation signal failed: ${error.message}`);
+    });
+  }
 
   const shop = await DigiShop.findById(order.shopId);
   if (!shop) throw httpError(404, "Shop not found for order");

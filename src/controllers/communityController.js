@@ -7,6 +7,10 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
+const { RECOMMENDATION_SIGNALS } = require("../constants/recommendations");
+const { awardFinspoSignal } = require("../services/recommendationService");
+const { normalizeHashtags } = require("../utils/hashtags");
+const { syncFinspoHashtags } = require("../services/hashtagService");
 
 const pageOptions = (query) => {
   const page = Math.max(Number(query.page || 1), 1);
@@ -469,13 +473,7 @@ exports.createGalleryPost = asyncHandler(async (req, res) => {
   const imageUrl = req.fileUrls?.[0];
   if (!imageUrl) throw httpError(422, "Gallery image is required");
 
-  const tags =
-    typeof req.body.tags === "string"
-      ? req.body.tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean)
-      : req.body.tags || [];
+  const tags = normalizeHashtags(req.body.tags);
 
   const post = await GalleryPost.create({
     userId: req.user.id,
@@ -483,6 +481,8 @@ exports.createGalleryPost = asyncHandler(async (req, res) => {
     caption: req.body.caption,
     tags,
   });
+
+  await syncFinspoHashtags(null, post);
 
   await invalidatePattern("gallery:page:*");
 
@@ -496,31 +496,29 @@ exports.updateGalleryPost = asyncHandler(async (req, res) => {
     throw httpError(404, "Gallery post not found");
   }
 
+  const previousPost = post.toObject();
   if (req.body.caption !== undefined) post.caption = req.body.caption;
   if (req.body.tags !== undefined) {
-    post.tags =
-      typeof req.body.tags === "string"
-        ? req.body.tags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean)
-        : req.body.tags;
+    post.tags = normalizeHashtags(req.body.tags);
   }
   if (req.fileUrls?.[0]) post.imageUrl = req.fileUrls[0];
 
   await post.save();
+  await syncFinspoHashtags(previousPost, post);
   await invalidatePattern("gallery:page:*");
 
   return success(res, { post }, "Gallery post updated");
 });
 
 exports.deleteGalleryPost = asyncHandler(async (req, res) => {
-  const post = await GalleryPost.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+  const post = await GalleryPost.findOne({ _id: req.params.id, userId: req.user.id });
 
   if (!post) {
     throw httpError(404, "Gallery post not found");
   }
 
+  await post.deleteOne();
+  await syncFinspoHashtags(post, null);
   await invalidatePattern("gallery:page:*");
 
   return success(res, { post }, "Gallery post deleted");
@@ -542,5 +540,23 @@ exports.toggleLike = asyncHandler(async (req, res) => {
   await post.save();
   await invalidatePattern("gallery:page:*");
 
-  return success(res, { post, liked: !hasLiked }, "Like updated");
+  if (!hasLiked) {
+    await awardFinspoSignal(
+      req.user.id,
+      post._id,
+      RECOMMENDATION_SIGNALS.FINSPO_LIKE,
+    ).catch((error) => {
+      console.warn(`Finspo recommendation signal failed: ${error.message}`);
+    });
+  }
+
+  return success(res, { post, liked: !hasLiked, likeCount: post.likes.length }, "Like updated");
+});
+
+exports.getLikeStatus = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findById(req.params.id).select("likes").lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const liked = post.likes.some((id) => id.toString() === req.user.id);
+  return success(res, { liked, likeCount: post.likes.length }, "Like status loaded");
 });

@@ -11,6 +11,7 @@ const router = express.Router();
 const listingBody = z.object({
   title: z.string().min(2).optional(),
   description: z.string().optional(),
+  hashtags: z.any().optional(),
   category: z.string().optional(),
   brand: z.string().optional(),
   size: z.string().optional(),

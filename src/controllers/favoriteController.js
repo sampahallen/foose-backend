@@ -5,6 +5,8 @@ const Listing = require("../models/Listing");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { RECOMMENDATION_SIGNALS } = require("../constants/recommendations");
+const { awardListingSignal } = require("../services/recommendationService");
 
 const targetModels = {
   event: Event,
@@ -71,11 +73,6 @@ exports.favoriteStatus = asyncHandler(async (req, res) => {
     throw httpError(400, "targetType and targetId are required");
   }
 
-  if (targetType === "finspo") {
-    const post = await GalleryPost.findOne({ _id: targetId, likes: req.user.id }).select("_id");
-    return success(res, { active: Boolean(post) }, "Favorite status loaded");
-  }
-
   if (!targetModels[targetType]) throw httpError(400, "Unsupported favorite target");
 
   const favorite = await Favorite.findOne({
@@ -90,7 +87,7 @@ exports.favoriteStatus = asyncHandler(async (req, res) => {
 exports.addFavorite = asyncHandler(async (req, res) => {
   await ensureTarget(req.params.targetType, req.params.targetId);
 
-  const favorite = await Favorite.findOneAndUpdate(
+  const writeResult = await Favorite.updateOne(
     {
       userId: req.user.id,
       targetType: req.params.targetType,
@@ -103,8 +100,23 @@ exports.addFavorite = asyncHandler(async (req, res) => {
         targetId: req.params.targetId,
       },
     },
-    { new: true, setDefaultsOnInsert: true, upsert: true },
-  ).lean();
+    { setDefaultsOnInsert: true, upsert: true },
+  );
+  const favorite = await Favorite.findOne({
+    userId: req.user.id,
+    targetType: req.params.targetType,
+    targetId: req.params.targetId,
+  }).lean();
+
+  if (req.params.targetType === "listing" && writeResult.upsertedCount > 0) {
+    await awardListingSignal(
+      req.user.id,
+      req.params.targetId,
+      RECOMMENDATION_SIGNALS.FAVORITE,
+    ).catch((error) => {
+      console.warn(`Favorite recommendation signal failed: ${error.message}`);
+    });
+  }
 
   return success(res, { favorite, active: true }, "Saved");
 });

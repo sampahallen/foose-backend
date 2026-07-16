@@ -16,6 +16,8 @@ const reviewRoutes = require("./routes/reviewRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
+const recommendationRoutes = require("./routes/recommendationRoutes");
+const hashtagRoutes = require("./routes/hashtagRoutes");
 const SiteAnalyticsEvent = require("./models/SiteAnalyticsEvent");
 const { generalLimiter } = require("./middleware/rateLimitMiddleware");
 const { success, error } = require("./utils/apiResponse");
@@ -58,6 +60,8 @@ app.use("/api/favorites", favoriteRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/analytics", analyticsRoutes);
+app.use("/api/recommendations", recommendationRoutes);
+app.use("/api/hashtags", hashtagRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.use((req, res) => {

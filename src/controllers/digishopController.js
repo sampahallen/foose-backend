@@ -5,7 +5,12 @@ const httpError = require("../utils/httpError");
 const slugify = require("../utils/slugify");
 const { success } = require("../utils/apiResponse");
 const { sendDigiShopWelcomeEmail } = require("../services/emailService");
+const {
+  ensureShopLocationFromOwner,
+  fillIncompleteListingLocations,
+} = require("../services/locationService");
 const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
+const { hasCompleteLocation, mergeLocation, normalizeLocation } = require("../utils/location");
 const { normalizePhone } = require("../utils/phone");
 
 const firstFileUrl = (req, ...fieldNames) => {
@@ -52,6 +57,12 @@ exports.createShop = asyncHandler(async (req, res) => {
   }
 
   const user = await User.findById(req.user.id);
+  const location = mergeLocation(shopLocationFromBody(req.body), user?.location);
+
+  if (!hasCompleteLocation(location)) {
+    throw httpError(422, "A city and region are required for your DigiShop location");
+  }
+
   const shop = await DigiShop.create({
     ownerId: req.user.id,
     shopName: req.body.shopName,
@@ -60,7 +71,7 @@ exports.createShop = asyncHandler(async (req, res) => {
     logoUrl: firstFileUrl(req, "logo", "logoImage"),
     bannerUrl: firstFileUrl(req, "banner", "bannerImage"),
     category: req.body.category || "both",
-    location: shopLocationFromBody(req.body),
+    location,
     socialLinks: {
       instagram: req.body.instagram || "",
       whatsapp: req.body.whatsapp || "",
@@ -82,6 +93,12 @@ exports.getMyShop = asyncHandler(async (req, res) => {
     throw httpError(404, "DigiShop not found");
   }
 
+  const resolved = await ensureShopLocationFromOwner(shop);
+  if (resolved.changed) {
+    await invalidate(`shop:${shop.slug}`, "listings:featured");
+    await invalidatePattern("search:*");
+  }
+
   return success(res, { shop }, "DigiShop loaded");
 });
 
@@ -91,6 +108,9 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   if (!shop) {
     throw httpError(404, "DigiShop not found");
   }
+
+  const resolved = await ensureShopLocationFromOwner(shop);
+  const locationSubmitted = req.body.city !== undefined || req.body.region !== undefined;
 
   ["shopName", "bio", "category"].forEach((field) => {
     if (req.body[field] !== undefined) shop[field] = req.body[field];
@@ -107,8 +127,14 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   if (req.body.whatsapp !== undefined) {
     shop.socialLinks.whatsapp = req.body.whatsapp;
   }
-  if (req.body.city !== undefined || req.body.region !== undefined) {
-    shop.location = shopLocationFromBody(req.body, shop.location);
+  if (locationSubmitted) {
+    const nextLocation = normalizeLocation(shopLocationFromBody(req.body, resolved.location));
+
+    if (!hasCompleteLocation(nextLocation)) {
+      throw httpError(422, "A city and region are required for your DigiShop location");
+    }
+
+    shop.location = nextLocation;
   }
   [
     "payoutMethodType",
@@ -131,6 +157,9 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   });
 
   await shop.save();
+  if (locationSubmitted) {
+    await fillIncompleteListingLocations(shop._id, shop.location);
+  }
   await invalidate(`shop:${shop.slug}`, "listings:featured");
   await invalidatePattern("search:*");
 

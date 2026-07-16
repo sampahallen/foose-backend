@@ -45,6 +45,26 @@ npm run dev
 GET http://localhost:8000/api/health
 ```
 
+## Hashtag Count Backfill
+
+After deploying the shared hashtag collection for the first time, run this once with the production `MONGO_URI` configured:
+
+```bash
+npm run hashtags:rebuild
+```
+
+The command is idempotent. It rebuilds exact counts from active/sold listings and all Finspo posts, creates records for previously unseen saved tags, and resets tags with no remaining posts to zero.
+
+## Marketplace Location Backfill
+
+Shop and listing locations are backfilled automatically after MongoDB connects. To rerun the same idempotent migration manually, use:
+
+```bash
+npm run locations:backfill
+```
+
+The migration fills an incomplete DigiShop location from its owner's account location, then snapshots that location onto legacy listings. Shops whose owner also lacks a complete city and region are reported and left unchanged. Search caches are cleared when records change.
+
 ## REST Client Tests
 
 Install the VS Code extension **REST Client** by Huachao Mao, then open files in `rest-client/` and click **Send Request** above any request.

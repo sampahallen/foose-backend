@@ -41,6 +41,8 @@ const softDeleteUser = async (user) => {
   user.resetPasswordExpires = undefined;
   user.refreshTokens = [];
   await user.save();
+  const ShadowProfile = require("../models/ShadowProfile");
+  await ShadowProfile.deleteOne({ userId: user._id });
   return user;
 };
 

@@ -10,6 +10,7 @@ const { estimateDeliveryFee } = require("../services/deliveryService");
 const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
 const { initializeTransaction } = require("../services/paystackService");
+const { awardPurchaseForOrder } = require("../services/recommendationService");
 
 const SELLER_ACTION_WINDOW_MS = 48 * 60 * 60 * 1000;
 const ESCROW_RELEASE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -205,6 +206,24 @@ exports.placeOrder = asyncHandler(async (req, res) => {
 
     if (!paidOnline) await notifySeller({ buyer, order, seller, shop });
     createdOrders.push(order);
+  }
+
+  if (!paidOnline) {
+    await Promise.all(
+      createdOrders.map(async (order) => {
+        const claimedOrder = await Order.findOneAndUpdate(
+          { _id: order._id, recommendationAwardedAt: { $exists: false } },
+          { $set: { recommendationAwardedAt: new Date() } },
+          { new: true },
+        ).lean();
+
+        if (claimedOrder) {
+          await awardPurchaseForOrder(claimedOrder).catch((error) => {
+            console.warn(`Purchase recommendation signal failed: ${error.message}`);
+          });
+        }
+      }),
+    );
   }
 
   await Promise.all(

@@ -8,6 +8,7 @@ const { softDeleteUser } = require("../utils/accountLifecycle");
 const { issueTokens, verifyRefreshToken } = require("../utils/generateToken");
 const { normalizePhone } = require("../utils/phone");
 const { sendEmail, sendPasswordResetEmail } = require("../services/emailService");
+const { ensureShadowProfile } = require("../services/recommendationService");
 const {
   appleAuthorizationUrl,
   clientCallbackUrl,
@@ -25,7 +26,16 @@ const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 const userFields = "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -authProviders";
 
+const ensureRecommendationProfile = async (userId) => {
+  try {
+    await ensureShadowProfile(userId);
+  } catch (error) {
+    console.warn(`Shadow profile setup failed: ${error.message}`);
+  }
+};
+
 const sendAuth = async (res, user, message, statusCode = 200) => {
+  await ensureRecommendationProfile(user._id);
   const tokens = issueTokens(user);
   user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
   await user.save();
@@ -112,6 +122,7 @@ const sendVerificationEmail = async (user) => {
 };
 
 const sendAuthRedirect = async (res, user, redirectTarget = "/login") => {
+  await ensureRecommendationProfile(user._id);
   const tokens = issueTokens(user);
   user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
   await user.save();
@@ -127,6 +138,7 @@ const sendAuthRedirect = async (res, user, redirectTarget = "/login") => {
 };
 
 const sendOAuthRedirect = async (res, user, redirectTarget) => {
+  await ensureRecommendationProfile(user._id);
   const tokens = issueTokens(user);
   user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
   await user.save();
@@ -164,6 +176,7 @@ exports.register = asyncHandler(async (req, res) => {
     location,
   });
 
+  await ensureRecommendationProfile(user._id);
   await sendVerificationEmail(user);
 
   return success(res, { email: user.email }, "Check your inbox for a verification link", 201);
@@ -305,6 +318,7 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
   }
 
   const tokens = issueTokens(user);
+  await ensureRecommendationProfile(user._id);
   user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
   await user.save();
 

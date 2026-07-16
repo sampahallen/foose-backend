@@ -91,6 +91,7 @@ router.post("/events/:id/attend", auth, controller.toggleAttend);
 router.get("/gallery", controller.listGallery);
 router.get("/gallery/me", auth, controller.listMyGallery);
 router.get("/gallery/following", auth, controller.listFollowingGallery);
+router.get("/gallery/:id/like", auth, controller.getLikeStatus);
 router.get("/gallery/:id", controller.getGalleryPost);
 router.post(
   "/gallery",

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { MAX_HASHTAGS, normalizeHashtags } = require("../utils/hashtags");
 const { Schema } = mongoose;
 
 const listingSchema = new Schema(
@@ -9,6 +10,18 @@ const listingSchema = new Schema(
       required: true,
       index: true,
     },
+    location: {
+      city: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      region: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+    },
     title: {
       type: String,
       required: true,
@@ -18,6 +31,13 @@ const listingSchema = new Schema(
       type: String,
       trim: true,
       default: "",
+    },
+    hashtags: {
+      type: [String],
+      default: [],
+      index: true,
+      set: normalizeHashtags,
+      validate: [(value) => value.length <= MAX_HASHTAGS, `A listing can have max ${MAX_HASHTAGS} hashtags`],
     },
     category: {
       type: String,
@@ -142,6 +162,7 @@ const listingSchema = new Schema(
   { timestamps: true },
 );
 
-listingSchema.index({ title: "text", brand: "text", description: "text" });
+listingSchema.index({ title: "text", brand: "text", description: "text", hashtags: "text" });
+listingSchema.index({ "location.region": 1, "location.city": 1, status: 1 });
 
 module.exports = mongoose.model("Listing", listingSchema);

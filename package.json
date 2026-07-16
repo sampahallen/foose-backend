@@ -7,7 +7,10 @@
     "dev": "nodemon server.js",
     "build": "npm run compile",
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/app.js"
+    "check": "node --check server.js && node --check src/app.js",
+    "hashtags:rebuild": "node scripts/rebuildHashtags.js",
+    "locations:backfill": "node scripts/backfillLocations.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

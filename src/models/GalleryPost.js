@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { MAX_HASHTAGS, normalizeHashtags } = require("../utils/hashtags");
 const { Schema } = mongoose;
 
 const galleryPostSchema = new Schema(
@@ -20,6 +21,8 @@ const galleryPostSchema = new Schema(
     tags: {
       type: [String],
       default: [],
+      set: normalizeHashtags,
+      validate: [(value) => value.length <= MAX_HASHTAGS, `A Finspo post can have max ${MAX_HASHTAGS} hashtags`],
     },
     likes: [
       {

@@ -95,6 +95,7 @@ const orderSchema = new Schema(
     autoReleaseAt: Date,
     releasedAt: Date,
     buyerConfirmedAt: Date,
+    recommendationAwardedAt: Date,
     delivery: {
       method: {
         type: String,

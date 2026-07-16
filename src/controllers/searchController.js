@@ -6,6 +6,8 @@ const SearchLog = require("../models/SearchLog");
 const asyncHandler = require("../utils/asyncHandler");
 const { success } = require("../utils/apiResponse");
 const { withCache } = require("../utils/cache");
+const { appendQueryClause, incompleteLocationQuery, locationLabel } = require("../utils/location");
+const { listingLocationClause } = require("../services/locationService");
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const TOP_PICK_TAG = "top-pick";
@@ -13,64 +15,48 @@ const TOP_PICK_TAG = "top-pick";
 const normalizeSearchText = (value) => String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 const SHOP_LISTING_FIELDS = "shopName slug rating totalReviews ownerId location";
 
-const shopLocationLabel = (shop) => [shop?.location?.city, shop?.location?.region]
-  .map((part) => String(part || "").trim())
-  .filter(Boolean)
-  .join(", ");
-
-const shopLocationMatches = (shop, value) => {
-  const normalizedValue = normalizeSearchText(value);
-  if (!normalizedValue) return false;
-
-  return [
-    shopLocationLabel(shop),
-    shop?.location?.city,
-    shop?.location?.region,
-  ].some((part) => normalizeSearchText(part) === normalizedValue);
-};
-
-const shopLocationQuery = () => ({
-  isLive: true,
-  $or: [
-    { "location.city": { $exists: true, $ne: "" } },
-    { "location.region": { $exists: true, $ne: "" } },
-  ],
-});
-
-const shopIdsForLocation = async (location) => {
-  if (!normalizeSearchText(location)) return null;
-
-  const shops = await DigiShop.find(shopLocationQuery())
-    .select("_id location")
-    .lean();
-
-  return shops
-    .filter((shop) => shopLocationMatches(shop, location))
-    .map((shop) => shop._id);
-};
-
 const listingLocationOptions = async (filter) => {
-  const shopIds = await Listing.distinct("shopId", filter);
+  const legacyFilter = { ...filter };
+  if (filter.$and) legacyFilter.$and = [...filter.$and];
+  appendQueryClause(legacyFilter, incompleteLocationQuery());
 
-  if (!shopIds.length) return [];
+  const [snapshotLocations, legacyShopIds] = await Promise.all([
+    Listing.aggregate([
+      { $match: filter },
+      {
+        $match: {
+          "location.city": { $exists: true, $ne: "" },
+          "location.region": { $exists: true, $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            city: "$location.city",
+            region: "$location.region",
+          },
+        },
+      },
+    ]),
+    Listing.distinct("shopId", legacyFilter),
+  ]);
 
-  const shops = await DigiShop.find({
-    ...shopLocationQuery(),
-    _id: { $in: shopIds },
-  })
-    .select("location")
-    .lean();
+  const legacyShops = legacyShopIds.length
+    ? await DigiShop.find({ _id: { $in: legacyShopIds }, isLive: true })
+        .select("location")
+        .lean()
+    : [];
 
   const optionsByValue = new Map();
 
-  shops.forEach((shop) => {
-    const label = shopLocationLabel(shop);
-    const value = label;
+  [...snapshotLocations.map((row) => row._id), ...legacyShops.map((shop) => shop.location)]
+    .forEach((location) => {
+      const label = locationLabel(location);
 
-    if (label) {
-      optionsByValue.set(normalizeSearchText(value), { label, value });
-    }
-  });
+      if (label) {
+        optionsByValue.set(normalizeSearchText(label), { label, value: label });
+      }
+    });
 
   return Array.from(optionsByValue.values())
     .sort((first, second) => first.label.localeCompare(second.label));
@@ -117,12 +103,14 @@ const listingSearchData = async (query, baseFilter = {}) => {
   const filter = { status: "active", visibility: { $ne: "event" }, ...baseFilter };
 
   if (query.q) {
-    const pattern = new RegExp(`\\b${escapeRegex(query.q)}`, "i");
+    const queryText = String(query.q).trim().replace(/^#+/, "");
+    const pattern = new RegExp(`\\b${escapeRegex(queryText)}`, "i");
     filter.$or = [
       { title: pattern },
       { brand: pattern },
       { category: pattern },
       { description: pattern },
+      { hashtags: pattern },
     ];
   }
 
@@ -139,9 +127,9 @@ const listingSearchData = async (query, baseFilter = {}) => {
   }
 
   const locationOptionsFilter = { ...filter };
+  if (filter.$and) locationOptionsFilter.$and = [...filter.$and];
   if (query.location) {
-    const matchingShopIds = await shopIdsForLocation(query.location);
-    filter.shopId = { $in: matchingShopIds || [] };
+    appendQueryClause(filter, await listingLocationClause(query.location));
   }
 
   const sortOptions = {

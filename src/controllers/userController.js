@@ -11,13 +11,19 @@ const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { deactivateUser, softDeleteUser } = require("../utils/accountLifecycle");
 const { normalizePhone } = require("../utils/phone");
+const { awardFinspoCreatorFollow, ensureShadowProfile } = require("../services/recommendationService");
 
 const privateFields =
   "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -deletedEmail -deletedUsername";
 const activeAccountFilter = { $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }] };
 
 exports.getMe = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id).select(privateFields).populate("kycId");
+  const [user] = await Promise.all([
+    User.findById(req.user.id).select(privateFields).populate("kycId"),
+    ensureShadowProfile(req.user.id).catch((error) => {
+      console.warn(`Shadow profile setup failed: ${error.message}`);
+    }),
+  ]);
   return success(res, { user }, "Profile loaded");
 });
 
@@ -135,13 +141,18 @@ exports.toggleFollow = asyncHandler(async (req, res) => {
 
   const followerCount = await User.countDocuments({ following: target._id });
   if (!isFollowing) {
-    await createNotification({
-      userId: target._id,
-      type: "system",
-      title: "New follower",
-      body: `${req.currentUser.name || req.user.username} started following you.`,
-      link: `/profile/${req.user.username}`,
-    });
+    await Promise.all([
+      createNotification({
+        userId: target._id,
+        type: "system",
+        title: "New follower",
+        body: `${req.currentUser.name || req.user.username} started following you.`,
+        link: `/profile/${req.user.username}`,
+      }),
+      awardFinspoCreatorFollow(req.user.id, target._id).catch((error) => {
+        console.warn(`Follow recommendation signal failed: ${error.message}`);
+      }),
+    ]);
   }
 
   return success(res, { following: !isFollowing, followerCount }, "Follow status updated");

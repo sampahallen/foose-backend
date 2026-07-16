@@ -4,6 +4,10 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
+const { normalizeHashtags } = require("../utils/hashtags");
+const { hasCompleteLocation, mergeLocation } = require("../utils/location");
+const { syncListingHashtags } = require("../services/hashtagService");
+const { ensureShopLocationFromOwner, listingLocationClause } = require("../services/locationService");
 
 const pageOptions = (query) => {
   const page = Math.max(Number(query.page || 1), 1);
@@ -80,6 +84,7 @@ const listingInput = (req, currentListing) => {
 
   const volumeDiscounts = parseVolumeDiscounts(req.body.volumeDiscounts);
   if (volumeDiscounts) input.volumeDiscounts = volumeDiscounts;
+  if (req.body.hashtags !== undefined) input.hashtags = normalizeHashtags(req.body.hashtags);
   if (req.body.promotionTags !== undefined) input.promotionTags = parsePromotionTags(req.body.promotionTags);
   if (currentListing) {
     const keptImagesTouched = req.body.keptImagesTouched !== undefined;
@@ -102,6 +107,10 @@ exports.listListings = asyncHandler(async (req, res) => {
   ["category", "type", "gender", "condition", "color", "size", "brand"].forEach((field) => {
     if (req.query[field]) filter[field] = req.query[field];
   });
+  if (req.query.location) {
+    const locationClause = await listingLocationClause(req.query.location);
+    if (locationClause) filter.$and = [locationClause];
+  }
 
   const [results, total] = await Promise.all([
     Listing.find(filter)
@@ -173,12 +182,20 @@ exports.createListing = asyncHandler(async (req, res) => {
     throw httpError(403, "DigiShop required");
   }
 
+  const resolvedLocation = await ensureShopLocationFromOwner(shop);
+  if (!hasCompleteLocation(resolvedLocation.location)) {
+    throw httpError(422, "Set both a city and region in your shop settings before posting an item");
+  }
+
   const listing = await Listing.create({
     ...listingInput(req),
     shopId: shop._id,
+    location: resolvedLocation.location,
   });
 
-  await invalidate("listings:featured", `shop:${shop._id}:listings`);
+  await syncListingHashtags(null, listing);
+
+  await invalidate("listings:featured", `shop:${shop._id}:listings`, `shop:${shop.slug}`);
   await invalidatePattern("search:*");
 
   return success(res, { listing }, "Listing created", 201);
@@ -186,6 +203,7 @@ exports.createListing = asyncHandler(async (req, res) => {
 
 exports.updateListing = asyncHandler(async (req, res) => {
   const shop = await DigiShop.findOne({ ownerId: req.user.id });
+  const resolvedLocation = shop ? await ensureShopLocationFromOwner(shop) : null;
   const listing = await Listing.findOne({
     _id: req.params.id,
     shopId: shop?._id,
@@ -196,8 +214,13 @@ exports.updateListing = asyncHandler(async (req, res) => {
     throw httpError(404, "Listing not found");
   }
 
+  const previousListing = listing.toObject();
   Object.assign(listing, listingInput(req, listing));
+  if (!hasCompleteLocation(listing.location) && hasCompleteLocation(resolvedLocation?.location)) {
+    listing.location = mergeLocation(listing.location, resolvedLocation.location);
+  }
   await listing.save();
+  await syncListingHashtags(previousListing, listing);
   await invalidate(
     "listings:featured",
     `listing:${listing._id}`,
@@ -220,8 +243,10 @@ exports.deleteListing = asyncHandler(async (req, res) => {
     throw httpError(404, "Listing not found");
   }
 
+  const previousListing = listing.toObject();
   listing.status = "removed";
   await listing.save();
+  await syncListingHashtags(previousListing, listing);
   await invalidate(
     "listings:featured",
     `listing:${listing._id}`,

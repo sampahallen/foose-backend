@@ -14,6 +14,7 @@ const {
   sendKycRejectedEmail,
 } = require("../services/emailService");
 const { createNotification } = require("../services/notificationService");
+const { syncListingHashtags } = require("../services/hashtagService");
 
 const APPROVED_KYC_ID_TYPES = ["Ghana Card", "Passport", "Driving License"];
 
@@ -570,13 +571,14 @@ exports.flaggedListings = asyncHandler(async (req, res) => {
 });
 
 exports.removeListing = asyncHandler(async (req, res) => {
-  const listing = await Listing.findByIdAndUpdate(
-    req.params.id,
-    { status: "removed" },
-    { new: true },
-  );
+  const listing = await Listing.findById(req.params.id);
 
   if (!listing) throw httpError(404, "Listing not found");
+
+  const previousListing = listing.toObject();
+  listing.status = "removed";
+  await listing.save();
+  await syncListingHashtags(previousListing, listing);
 
   return success(res, { listing }, "Listing removed");
 });

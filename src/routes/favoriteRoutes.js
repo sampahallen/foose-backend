@@ -22,7 +22,7 @@ router.get(
       params: z.object({}),
       query: z.object({
         targetId: z.string().min(1),
-        targetType: z.enum(["listing", "event", "finspo"]),
+        targetType: z.enum(["listing", "event"]),
       }),
     }),
   ),
