@@ -9,6 +9,7 @@
     "start": "node server.js",
     "check": "node --check server.js && node --check src/app.js",
     "hashtags:rebuild": "node scripts/rebuildHashtags.js",
+    "search:rebuild": "node scripts/rebuildSearch.js",
     "locations:backfill": "node scripts/backfillLocations.js",
     "test": "node --test"
   },

@@ -50,7 +50,7 @@ router.put(
   ...shopImages,
   validate(
     z.object({
-      body: shopBody,
+      body: shopBody.extend({ isLive: z.boolean().optional() }),
       params: z.object({}),
       query: z.object({}),
     }),

@@ -15,7 +15,7 @@ const isPublishedListing = (listing) =>
 const tagsForListing = (listing) =>
   isPublishedListing(listing) ? normalizeHashtags(listing.hashtags) : [];
 
-const tagsForFinspo = (post) => (post ? normalizeHashtags(post.tags) : []);
+const tagsForFinspo = (post) => (post && !post.isArchived ? normalizeHashtags(post.tags) : []);
 
 const hashtagDiff = (beforeTags, afterTags) => {
   const before = new Set(normalizeHashtags(beforeTags));
@@ -102,7 +102,7 @@ const collectTagCounts = async (Model, match, field) => {
 const rebuildHashtagCounts = async () => {
   const [listingCounts, finspoCounts] = await Promise.all([
     collectTagCounts(Listing, { status: { $in: [...COUNTED_LISTING_STATUSES] } }, "hashtags"),
-    collectTagCounts(GalleryPost, {}, "tags"),
+    collectTagCounts(GalleryPost, { isArchived: { $ne: true } }, "tags"),
   ]);
 
   const names = new Set([...listingCounts.keys(), ...finspoCounts.keys()]);

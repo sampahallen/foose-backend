@@ -41,7 +41,7 @@ exports.listFavorites = asyncHandler(async (req, res) => {
       .populate("shopId", "shopName slug rating totalReviews")
       .lean(),
     Event.find({ _id: { $in: eventIds } }).sort({ date: -1, createdAt: -1 }).lean(),
-    GalleryPost.find({ likes: req.user.id })
+    GalleryPost.find({ isArchived: { $ne: true }, likes: req.user.id })
       .populate("userId", "name username profilePhoto isKycVerified")
       .sort({ createdAt: -1 })
       .lean(),

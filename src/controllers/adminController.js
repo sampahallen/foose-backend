@@ -15,6 +15,10 @@ const {
 } = require("../services/emailService");
 const { createNotification } = require("../services/notificationService");
 const { syncListingHashtags } = require("../services/hashtagService");
+const {
+  runSearchSync,
+  syncListingSearchDocument,
+} = require("../services/searchIndexService");
 
 const APPROVED_KYC_ID_TYPES = ["Ghana Card", "Passport", "Driving License"];
 
@@ -579,6 +583,8 @@ exports.removeListing = asyncHandler(async (req, res) => {
   listing.status = "removed";
   await listing.save();
   await syncListingHashtags(previousListing, listing);
+  await runSearchSync(`listing:${listing._id}:admin-remove`, () =>
+    syncListingSearchDocument(listing._id));
 
   return success(res, { listing }, "Listing removed");
 });

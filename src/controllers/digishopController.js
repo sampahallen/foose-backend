@@ -6,6 +6,10 @@ const slugify = require("../utils/slugify");
 const { success } = require("../utils/apiResponse");
 const { sendDigiShopWelcomeEmail } = require("../services/emailService");
 const {
+  runSearchSync,
+  syncShopSearchDocuments,
+} = require("../services/searchIndexService");
+const {
   ensureShopLocationFromOwner,
   fillIncompleteListingLocations,
 } = require("../services/locationService");
@@ -81,6 +85,8 @@ exports.createShop = asyncHandler(async (req, res) => {
 
   user.hasShop = true;
   await user.save();
+  await runSearchSync(`shop:${shop._id}:create`, () =>
+    syncShopSearchDocuments(shop._id));
   await sendDigiShopWelcomeEmail(user, shop);
 
   return success(res, { shop }, "DigiShop created", 201);
@@ -95,6 +101,8 @@ exports.getMyShop = asyncHandler(async (req, res) => {
 
   const resolved = await ensureShopLocationFromOwner(shop);
   if (resolved.changed) {
+    await runSearchSync(`shop:${shop._id}:location-backfill`, () =>
+      syncShopSearchDocuments(shop._id));
     await invalidate(`shop:${shop.slug}`, "listings:featured");
     await invalidatePattern("search:*");
   }
@@ -112,7 +120,7 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   const resolved = await ensureShopLocationFromOwner(shop);
   const locationSubmitted = req.body.city !== undefined || req.body.region !== undefined;
 
-  ["shopName", "bio", "category"].forEach((field) => {
+  ["shopName", "bio", "category", "isLive"].forEach((field) => {
     if (req.body[field] !== undefined) shop[field] = req.body[field];
   });
 
@@ -160,6 +168,8 @@ exports.updateMyShop = asyncHandler(async (req, res) => {
   if (locationSubmitted) {
     await fillIncompleteListingLocations(shop._id, shop.location);
   }
+  await runSearchSync(`shop:${shop._id}:update`, () =>
+    syncShopSearchDocuments(shop._id));
   await invalidate(`shop:${shop.slug}`, "listings:featured");
   await invalidatePattern("search:*");
 

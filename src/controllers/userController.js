@@ -12,6 +12,10 @@ const { success } = require("../utils/apiResponse");
 const { deactivateUser, softDeleteUser } = require("../utils/accountLifecycle");
 const { normalizePhone } = require("../utils/phone");
 const { awardFinspoCreatorFollow, ensureShadowProfile } = require("../services/recommendationService");
+const {
+  rebuildUserSearchDocuments,
+  runSearchSync,
+} = require("../services/searchIndexService");
 
 const privateFields =
   "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -deletedEmail -deletedUsername";
@@ -25,6 +29,22 @@ exports.getMe = asyncHandler(async (req, res) => {
     }),
   ]);
   return success(res, { user }, "Profile loaded");
+});
+
+exports.usernameAvailability = asyncHandler(async (req, res) => {
+  const username = String(req.validated?.query?.username ?? req.query.username)
+    .trim()
+    .toLowerCase();
+  const existingUser = await User.exists({
+    username,
+    _id: { $ne: req.user.id },
+  });
+
+  return success(
+    res,
+    { username, available: !existingUser },
+    "Username availability checked",
+  );
 });
 
 exports.updateMe = asyncHandler(async (req, res) => {
@@ -60,6 +80,11 @@ exports.updateMe = asyncHandler(async (req, res) => {
     runValidators: true,
   }).select(privateFields);
 
+  if (user) {
+    await runSearchSync(`user:${user._id}:profile-update`, () =>
+      rebuildUserSearchDocuments(user._id));
+  }
+
   return success(res, { user }, "Profile updated");
 });
 
@@ -76,7 +101,10 @@ const profileForUser = async (user, options = {}) => {
           .lean()
       : [],
     Event.find({ organizerId: user._id }).sort({ date: -1 }).limit(12).lean(),
-    GalleryPost.find({ userId: user._id }).sort({ createdAt: -1 }).limit(12).lean(),
+    GalleryPost.find({ isArchived: { $ne: true }, userId: user._id })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .lean(),
     User.countDocuments({ following: user._id }),
     viewerId ? User.exists({ _id: viewerId, following: user._id }) : null,
     includeOrders

@@ -9,6 +9,23 @@ const validate = require("../middleware/validateMiddleware");
 const router = express.Router();
 
 router.get("/feed", optionalAuth, controller.getFeed);
+router.get("/finspo", optionalAuth, controller.getFinspoFeed);
+router.get(
+  "/explore",
+  optionalAuth,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: z.object({}),
+      query: z.object({
+        cursor: z.string().max(4096).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+        seed: z.string().trim().max(120).optional(),
+      }).strict(),
+    }),
+  ),
+  controller.getExploreFeed,
+);
 router.get("/suggested", auth, controller.getSuggestedFeed);
 router.post(
   "/signals",
@@ -29,6 +46,22 @@ router.post(
     }),
   ),
   controller.recordListingSignal,
+);
+
+router.post(
+  "/finspo-signals",
+  auth,
+  validate(
+    z.object({
+      body: z.object({
+        postId: z.string().min(1),
+        type: z.literal(RECOMMENDATION_SIGNALS.FINSPO_SEARCH_CLICK),
+      }).strict(),
+      params: z.object({}),
+      query: z.object({}),
+    }),
+  ),
+  controller.recordFinspoSignal,
 );
 
 module.exports = router;

@@ -8,6 +8,11 @@ const { success } = require("../utils/apiResponse");
 const { withCache } = require("../utils/cache");
 const { appendQueryClause, incompleteLocationQuery, locationLabel } = require("../utils/location");
 const { listingLocationClause } = require("../services/locationService");
+const {
+  shouldLogUnifiedSearch,
+  unifiedSearch,
+  unifiedSuggestions,
+} = require("../services/searchQueryService");
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const TOP_PICK_TAG = "top-pick";
@@ -163,11 +168,27 @@ const listingSearchData = async (query, baseFilter = {}) => {
 };
 
 exports.searchListings = asyncHandler(async (req, res) => {
-  logSearchTerm(req.query.q);
   const cacheKey = `search:${queryHash(req.query)}`;
   const data = await withCache(cacheKey, 60, () => listingSearchData(req.query));
 
   return success(res, data);
+});
+
+exports.searchUnified = asyncHandler(async (req, res) => {
+  const { cursor, limit = 50, q, scope = "all", tag, track } = req.validated?.query || req.query;
+  const data = await unifiedSearch({ cursor, limit, q, scope, tag });
+
+  if (shouldLogUnifiedSearch({ cursor, scope, track })) {
+    logSearchTerm(tag ? `#${data.query}` : q);
+  }
+
+  return success(res, data, "Search results loaded");
+});
+
+exports.getUnifiedSuggestions = asyncHandler(async (req, res) => {
+  const query = req.validated?.query || req.query;
+  const data = await unifiedSuggestions(query);
+  return success(res, data, "Search suggestions loaded");
 });
 
 exports.getTopPicks = asyncHandler(async (req, res) => {

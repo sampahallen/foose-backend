@@ -10,6 +10,11 @@ const { normalizePhone } = require("../utils/phone");
 const { sendEmail, sendPasswordResetEmail } = require("../services/emailService");
 const { ensureShadowProfile } = require("../services/recommendationService");
 const {
+  rebuildUserSearchDocuments,
+  runSearchSync,
+  syncUserSearchDocument,
+} = require("../services/searchIndexService");
+const {
   appleAuthorizationUrl,
   clientCallbackUrl,
   findOrCreateOAuthUser,
@@ -177,6 +182,8 @@ exports.register = asyncHandler(async (req, res) => {
   });
 
   await ensureRecommendationProfile(user._id);
+  await runSearchSync(`user:${user._id}:register`, () =>
+    syncUserSearchDocument(user._id));
   await sendVerificationEmail(user);
 
   return success(res, { email: user.email }, "Check your inbox for a verification link", 201);
@@ -237,6 +244,8 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   const redirectTarget = readState(req.query.state);
   const profile = await getGoogleProfile(req.query.code);
   const user = await findOrCreateOAuthUser(profile);
+  await runSearchSync(`user:${user._id}:google-oauth`, () =>
+    syncUserSearchDocument(user._id));
   return sendOAuthRedirect(res, user, redirectTarget);
 });
 
@@ -244,6 +253,8 @@ exports.appleCallback = asyncHandler(async (req, res) => {
   const redirectTarget = readState(req.body.state || req.query.state);
   const profile = await getAppleProfile(req.body.code || req.query.code, req.body.user);
   const user = await findOrCreateOAuthUser(profile);
+  await runSearchSync(`user:${user._id}:apple-oauth`, () =>
+    syncUserSearchDocument(user._id));
   return sendOAuthRedirect(res, user, redirectTarget);
 });
 
@@ -308,6 +319,9 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
 
     throw httpError(400, "Invalid email verification token");
   }
+
+  await runSearchSync(`user:${user._id}:activate`, () =>
+    rebuildUserSearchDocuments(user._id));
 
   if (wantsBrowserRedirect(req)) {
     const params = new URLSearchParams({

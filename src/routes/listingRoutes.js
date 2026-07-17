@@ -2,6 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/listingController");
 const auth = require("../middleware/authMiddleware");
+const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const { hasShop } = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
 const { listingImages } = require("../middleware/uploadMiddleware");
@@ -58,10 +59,26 @@ const listingBody = z.object({
   status: z.enum(["active", "sold", "draft", "removed"]).optional(),
 }).strict();
 
+const myListingsQuerySchema = z.object({
+  status: z.enum(["active", "sold", "draft"]).optional(),
+}).strict();
+
 router.get("/", controller.listListings);
 router.get("/shop/:shopId", controller.getShopListings);
-router.get("/me", auth, hasShop, controller.getMyListings);
-router.get("/:id", controller.getListing);
+router.get(
+  "/me",
+  auth,
+  hasShop,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: z.object({}),
+      query: myListingsQuerySchema,
+    }),
+  ),
+  controller.getMyListings,
+);
+router.get("/:id", optionalAuth, controller.getListing);
 router.post(
   "/",
   auth,
@@ -97,3 +114,4 @@ router.put(
 router.delete("/:id", auth, hasShop, controller.deleteListing);
 
 module.exports = router;
+module.exports.myListingsQuerySchema = myListingsQuerySchema;

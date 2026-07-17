@@ -7,6 +7,10 @@ const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
 const { normalizeHashtags } = require("../utils/hashtags");
 const { hasCompleteLocation, mergeLocation } = require("../utils/location");
 const { syncListingHashtags } = require("../services/hashtagService");
+const {
+  runSearchSync,
+  syncListingSearchDocument,
+} = require("../services/searchIndexService");
 const { ensureShopLocationFromOwner, listingLocationClause } = require("../services/locationService");
 
 const pageOptions = (query) => {
@@ -125,11 +129,6 @@ exports.listListings = asyncHandler(async (req, res) => {
 });
 
 exports.getListing = asyncHandler(async (req, res) => {
-  await Listing.updateOne(
-    { _id: req.params.id, status: { $ne: "removed" } },
-    { $inc: { views: 1 } },
-  );
-
   const listing = await withCache(`listing:${req.params.id}`, 600, () =>
     Listing.findOne({ _id: req.params.id, status: { $ne: "removed" } })
       .populate("shopId", "shopName slug rating totalReviews ownerId location")
@@ -138,6 +137,22 @@ exports.getListing = asyncHandler(async (req, res) => {
 
   if (!listing) {
     throw httpError(404, "Listing not found");
+  }
+
+  const populatedShop = listing.shopId && typeof listing.shopId === "object"
+    ? listing.shopId
+    : null;
+  const ownerId = populatedShop?.ownerId?._id || populatedShop?.ownerId;
+  const isPublicListing = !listing.status || listing.status === "active";
+  if (!isPublicListing && String(ownerId || "") !== String(req.user?.id || "")) {
+    throw httpError(404, "Listing not found");
+  }
+
+  if (isPublicListing) {
+    await Listing.updateOne(
+      { _id: req.params.id, status: { $ne: "removed" } },
+      { $inc: { views: 1 } },
+    );
   }
 
   return success(res, { listing }, "Listing loaded");
@@ -165,9 +180,10 @@ exports.getMyListings = asyncHandler(async (req, res) => {
     throw httpError(403, "DigiShop required");
   }
 
+  const requestedStatus = req.validated?.query?.status ?? req.query.status;
   const listings = await Listing.find({
     shopId: shop._id,
-    status: { $ne: "removed" },
+    status: requestedStatus || { $ne: "removed" },
   })
     .sort({ createdAt: -1 })
     .lean();
@@ -194,6 +210,8 @@ exports.createListing = asyncHandler(async (req, res) => {
   });
 
   await syncListingHashtags(null, listing);
+  await runSearchSync(`listing:${listing._id}:create`, () =>
+    syncListingSearchDocument(listing._id));
 
   await invalidate("listings:featured", `shop:${shop._id}:listings`, `shop:${shop.slug}`);
   await invalidatePattern("search:*");
@@ -221,6 +239,8 @@ exports.updateListing = asyncHandler(async (req, res) => {
   }
   await listing.save();
   await syncListingHashtags(previousListing, listing);
+  await runSearchSync(`listing:${listing._id}:update`, () =>
+    syncListingSearchDocument(listing._id));
   await invalidate(
     "listings:featured",
     `listing:${listing._id}`,
@@ -247,6 +267,8 @@ exports.deleteListing = asyncHandler(async (req, res) => {
   listing.status = "removed";
   await listing.save();
   await syncListingHashtags(previousListing, listing);
+  await runSearchSync(`listing:${listing._id}:remove`, () =>
+    syncListingSearchDocument(listing._id));
   await invalidate(
     "listings:featured",
     `listing:${listing._id}`,

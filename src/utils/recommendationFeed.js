@@ -36,6 +36,8 @@ const shuffled = (items, random) => {
 const itemId = (item) => String(item?._id || item?.id || "");
 
 const takeUnique = (items, limit, seen) => {
+  if (limit <= 0) return [];
+
   const selected = [];
 
   for (const item of items) {
@@ -47,6 +49,48 @@ const takeUnique = (items, limit, seen) => {
   }
 
   return selected;
+};
+
+const composeFinspoFeed = ({
+  fresh,
+  newCount,
+  pageSize,
+  personalized,
+  personalizedCount,
+  seed,
+}) => {
+  const allItems = [...personalized, ...fresh];
+  const total = new Set(allItems.map(itemId).filter(Boolean)).size;
+  const seen = new Set();
+  const results = [];
+  const allocations = [];
+  let batchIndex = 0;
+
+  while (seen.size < total) {
+    const targetSize = Math.min(pageSize, total - seen.size);
+    const personalizedTarget = Math.min(
+      personalizedCount,
+      Math.ceil(targetSize * (personalizedCount / pageSize)),
+    );
+    const newTarget = Math.min(newCount, targetSize - personalizedTarget);
+    const personalizedItems = takeUnique(personalized, personalizedTarget, seen);
+    const newItems = takeUnique(fresh, newTarget, seen);
+    const batch = [...personalizedItems, ...newItems];
+    const fallbackItems = takeUnique(allItems, targetSize - batch.length, seen);
+    batch.push(...fallbackItems);
+
+    if (!batch.length) break;
+
+    results.push(...shuffled(batch, createSeededRandom(`${seed}:batch:${batchIndex}`)));
+    allocations.push({
+      fallback: fallbackItems.length,
+      new: newItems.length,
+      personalized: personalizedItems.length,
+    });
+    batchIndex += 1;
+  }
+
+  return { allocations, results };
 };
 
 const promotedSlots = (total, count, requestedGap, random) => {
@@ -163,6 +207,57 @@ const composePersonalizedFeed = ({ promoted, regular, requestedGap, seed }) => {
   };
 };
 
+const selectFinspoAccountCandidates = ({ candidates, limit, seed }) => {
+  const candidatesByCreator = new Map();
+
+  (candidates || []).forEach((candidate) => {
+    const creatorId = String(candidate?.creatorId || candidate?.userId || "");
+    if (!creatorId) return;
+
+    const score = Number(candidate?.score) || 0;
+    const existing = candidatesByCreator.get(creatorId);
+    if (existing && Number(existing.score || 0) >= score) return;
+
+    candidatesByCreator.set(creatorId, { ...candidate, creatorId, score });
+  });
+
+  const targetLimit = Math.min(
+    Math.max(Math.floor(Number(limit) || 0), 0),
+    candidatesByCreator.size,
+  );
+  if (!targetLimit) {
+    return {
+      fallbackCount: 0,
+      personalized: false,
+      personalizedCount: 0,
+      results: [],
+    };
+  }
+
+  const tieRandom = createSeededRandom(`${seed}:personalized-ties`);
+  const prepared = [...candidatesByCreator.values()].map((candidate) => ({
+    candidate,
+    score: candidate.score,
+    tie: tieRandom(),
+  }));
+  const personalized = prepared
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.tie - right.tie);
+  const fallback = shuffled(
+    prepared.filter(({ score }) => score <= 0),
+    createSeededRandom(`${seed}:fallback`),
+  );
+  const selected = [...personalized, ...fallback].slice(0, targetLimit);
+  const personalizedCount = selected.filter(({ score }) => score > 0).length;
+
+  return {
+    fallbackCount: selected.length - personalizedCount,
+    personalized: personalizedCount > 0,
+    personalizedCount,
+    results: selected.map(({ candidate }) => candidate),
+  };
+};
+
 const selectSuggestedCandidates = ({ minimumScore, scoredCandidates, seed }) => {
   const personalized = scoredCandidates
     .filter(({ score }) => score >= minimumScore)
@@ -185,10 +280,12 @@ const selectSuggestedCandidates = ({ minimumScore, scoredCandidates, seed }) => 
 };
 
 module.exports = {
+  composeFinspoFeed,
   composeFirstPage,
   composePersonalizedFeed,
   createSeededRandom,
   promotedSlots,
+  selectFinspoAccountCandidates,
   selectSuggestedCandidates,
   shuffled,
 };

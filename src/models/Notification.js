@@ -29,13 +29,40 @@ const notificationSchema = new Schema(
       trim: true,
       default: "",
     },
+    eventKey: {
+      type: String,
+      trim: true,
+      maxlength: 240,
+      select: false,
+    },
     isRead: {
       type: Boolean,
       default: false,
       index: true,
     },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    toJSON: {
+      transform(_document, value) {
+        delete value.eventKey;
+        return value;
+      },
+    },
+  },
+);
+
+notificationSchema.index(
+  { userId: 1, eventKey: 1 },
+  {
+    name: "notification_user_event_unique",
+    partialFilterExpression: { eventKey: { $type: "string" } },
+    unique: true,
+  },
+);
+notificationSchema.index(
+  { userId: 1, isRead: 1, createdAt: -1 },
+  { name: "notification_user_read_created" },
 );
 
 module.exports = mongoose.model("Notification", notificationSchema);

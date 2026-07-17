@@ -39,8 +39,9 @@ test("only published listings contribute to hashtag post counts", () => {
   assert.deepEqual(tagsForListing({ status: "draft", hashtags: ["#Vintage"] }), []);
 });
 
-test("Finspo posts contribute their normalized tags until deleted", () => {
+test("Finspo posts contribute their normalized tags until archived or deleted", () => {
   assert.deepEqual(tagsForFinspo({ tags: "#Thrifted, OOTD" }), ["thrifted", "ootd"]);
+  assert.deepEqual(tagsForFinspo({ isArchived: true, tags: "#Thrifted, OOTD" }), []);
   assert.deepEqual(tagsForFinspo(null), []);
 });
 

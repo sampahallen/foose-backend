@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const DigiShop = require("../models/DigiShop");
 const GalleryPost = require("../models/GalleryPost");
 const Listing = require("../models/Listing");
@@ -5,6 +6,8 @@ const ShadowProfile = require("../models/ShadowProfile");
 const User = require("../models/User");
 const {
   DWELL_POINTS,
+  FINSPO_ACCOUNT_SUGGESTIONS,
+  FINSPO_FEED,
   RECOMMENDATION_FEED,
   RECOMMENDATION_POINTS,
   RECOMMENDATION_SIGNALS,
@@ -14,14 +17,20 @@ const { normalizeHashtags } = require("../utils/hashtags");
 const { appendQueryClause, effectiveListingLocation, locationLabel } = require("../utils/location");
 const { listingLocationClause } = require("./locationService");
 const {
+  composeFinspoFeed,
   composeFirstPage,
   composePersonalizedFeed,
   createSeededRandom,
+  selectFinspoAccountCandidates,
   selectSuggestedCandidates,
   shuffled,
 } = require("../utils/recommendationFeed");
 
 const LISTING_POPULATE_FIELDS = "shopName slug rating totalReviews ownerId location";
+const FINSPO_ACCOUNT_FIELDS = "name username bio profilePhoto isKycVerified hasShop";
+const ACTIVE_ACCOUNT_FILTER = {
+  $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }],
+};
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -163,7 +172,9 @@ const awardFinspoSignal = async (userId, postId, signal) => {
   const points = signalPoints(signal);
   if (!points) return null;
 
-  const post = await GalleryPost.findById(postId).select("userId tags").lean();
+  const post = await GalleryPost.findOne({ _id: postId, isArchived: { $ne: true } })
+    .select("userId tags")
+    .lean();
   if (!post || idValue(post.userId) === idValue(userId)) return null;
 
   return awardProfile({
@@ -175,7 +186,7 @@ const awardFinspoSignal = async (userId, postId, signal) => {
 };
 
 const awardFinspoCreatorFollow = async (userId, creatorId) => {
-  const posts = await GalleryPost.find({ userId: creatorId })
+  const posts = await GalleryPost.find({ userId: creatorId, isArchived: { $ne: true } })
     .select("tags userId")
     .sort({ createdAt: -1 })
     .limit(20)
@@ -233,6 +244,180 @@ const scoreListing = (profile, listing) => {
     affinityScore(itemProfile, "size", item.size) +
     mapScore(finspoProfile.creatorId, ownerId)
   );
+};
+
+const scoreFinspo = (profile, post) => {
+  if (!profile) return 0;
+
+  const finspo = finspoAffinities(post);
+  const finspoProfile = profile.finspoAffinities || {};
+  const itemProfile = profile.itemAffinities || {};
+  const creatorId = finspo.creatorId[0];
+
+  return (
+    affinityScore(finspoProfile, "hashtags", finspo.hashtags) +
+    affinityScore(itemProfile, "hashtags", finspo.hashtags) +
+    mapScore(finspoProfile.creatorId, creatorId)
+  );
+};
+
+const scoreFinspoCreator = (profile, creatorId, tags) => {
+  if (!profile) return 0;
+
+  const normalizedCreatorId = affinityKey(idValue(creatorId));
+  const normalizedTags = uniqueValues(tags);
+  const finspoProfile = profile.finspoAffinities || {};
+  const itemProfile = profile.itemAffinities || {};
+
+  return (
+    affinityScore(finspoProfile, "hashtags", normalizedTags) +
+    affinityScore(itemProfile, "hashtags", normalizedTags) +
+    mapScore(finspoProfile.creatorId, normalizedCreatorId)
+  );
+};
+
+const mapEntries = (value) => {
+  if (!value) return [];
+  if (value instanceof Map) return [...value.entries()];
+  return typeof value === "object" ? Object.entries(value) : [];
+};
+
+const strictObjectIdStrings = (values) =>
+  Array.from(new Set((values || []).map(idValue).filter((value) => /^[a-f\d]{24}$/i.test(value))));
+
+const objectIds = (values) =>
+  strictObjectIdStrings(values).map((value) => new mongoose.Types.ObjectId(value));
+
+const emptyFinspoAccountSuggestions = () => ({
+  suggestedAccounts: [],
+  suggestionMeta: {
+    fallbackCount: 0,
+    personalized: false,
+    personalizedCount: 0,
+  },
+});
+
+const buildFinspoAccountSuggestions = async ({ excludedUserIds = [], userId }) => {
+  if (!userId) return emptyFinspoAccountSuggestions();
+
+  const profile = await ensureShadowProfile(userId);
+  const excludedIds = strictObjectIdStrings([userId, ...excludedUserIds]);
+  const excludedSet = new Set(excludedIds);
+  const excludedObjectIds = objectIds(excludedIds);
+  const directCreatorIds = strictObjectIdStrings(
+    mapEntries(profile?.finspoAffinities?.creatorId)
+      .filter(([, score]) => Number(score) > 0)
+      .map(([creatorId]) => creatorId),
+  ).filter((creatorId) => !excludedSet.has(creatorId));
+  const directCreatorObjectIds = objectIds(directCreatorIds);
+  const galleryFilter = {
+    isArchived: { $ne: true },
+    ...(excludedObjectIds.length ? { userId: { $nin: excludedObjectIds } } : {}),
+  };
+
+  const creatorGroupStages = () => [
+    {
+      $group: {
+        _id: "$userId",
+        finspoCount: { $sum: 1 },
+        latestPostAt: { $max: "$createdAt" },
+        tags: { $push: "$tags" },
+      },
+    },
+  ];
+  const [recentCreatorGroups, directCreatorGroups] = await Promise.all([
+    GalleryPost.aggregate([
+      { $match: galleryFilter },
+      ...creatorGroupStages(),
+      { $sort: { latestPostAt: -1, _id: 1 } },
+      { $limit: FINSPO_ACCOUNT_SUGGESTIONS.CANDIDATE_LIMIT },
+    ]),
+    directCreatorObjectIds.length
+      ? GalleryPost.aggregate([
+          {
+            $match: {
+              isArchived: { $ne: true },
+              userId: {
+                $in: directCreatorObjectIds,
+                ...(excludedObjectIds.length ? { $nin: excludedObjectIds } : {}),
+              },
+            },
+          },
+          ...creatorGroupStages(),
+          { $sort: { latestPostAt: -1, _id: 1 } },
+        ])
+      : Promise.resolve([]),
+  ]);
+
+  const creatorsById = new Map();
+  const addCreator = (creatorId, tags, finspoCount) => {
+    const normalizedId = idValue(creatorId);
+    if (!normalizedId || excludedSet.has(normalizedId)) return;
+
+    if (!creatorsById.has(normalizedId)) {
+      creatorsById.set(normalizedId, {
+        creatorId: normalizedId,
+        finspoCount: 0,
+        tags: new Set(),
+      });
+    }
+
+    const creator = creatorsById.get(normalizedId);
+    creator.finspoCount = Math.max(creator.finspoCount, Number(finspoCount) || 0);
+    const tagGroups = Array.isArray(tags) && tags.some(Array.isArray) ? tags : [tags];
+    tagGroups.forEach((group) => {
+      normalizeHashtags(group).forEach((tag) => creator.tags.add(tag));
+    });
+  };
+
+  recentCreatorGroups.forEach((group) => addCreator(group._id, group.tags, group.finspoCount));
+  directCreatorGroups.forEach((group) => addCreator(group._id, group.tags, group.finspoCount));
+
+  const candidateIds = strictObjectIdStrings([...creatorsById.keys()]);
+  if (!candidateIds.length) return emptyFinspoAccountSuggestions();
+
+  const activeUsers = await User.find({
+    ...ACTIVE_ACCOUNT_FILTER,
+    _id: { $in: objectIds(candidateIds) },
+  })
+    .select(FINSPO_ACCOUNT_FIELDS)
+    .lean();
+  const usersById = new Map(activeUsers.map((user) => [idValue(user._id), user]));
+  const candidates = [...creatorsById.values()]
+    .filter(({ creatorId }) => usersById.has(creatorId))
+    .map(({ creatorId, finspoCount, tags }) => ({
+      creatorId,
+      finspoCount,
+      score: scoreFinspoCreator(profile, creatorId, [...tags]),
+    }));
+  const seed = `${idValue(userId)}:${new Date().toISOString().slice(0, 10)}:finspo-account-suggestions`;
+  const selection = selectFinspoAccountCandidates({
+    candidates,
+    limit: FINSPO_ACCOUNT_SUGGESTIONS.LIMIT,
+    seed,
+  });
+  const suggestedAccounts = selection.results.map(({ creatorId, finspoCount }) => {
+    const user = usersById.get(creatorId);
+    return {
+      _id: user._id,
+      bio: user.bio || "",
+      finspoCount: Number(finspoCount) || 0,
+      hasShop: Boolean(user.hasShop),
+      isKycVerified: Boolean(user.isKycVerified),
+      name: user.name,
+      profilePhoto: user.profilePhoto,
+      username: user.username,
+    };
+  });
+
+  return {
+    suggestedAccounts,
+    suggestionMeta: {
+      fallbackCount: selection.fallbackCount,
+      personalized: selection.personalized,
+      personalizedCount: selection.personalizedCount,
+    },
+  };
 };
 
 const listingFilter = async (query, userId) => {
@@ -399,6 +584,75 @@ const buildRecommendationFeed = async ({ query, userId }) => {
   };
 };
 
+const buildFinspoFeed = async ({ query, userId }) => {
+  const page = Math.max(Number(query.page || 1), 1);
+  const excludePostId = String(query.exclude || "").trim();
+  const galleryFilter = {
+    isArchived: { $ne: true },
+    ...(/^[a-f\d]{24}$/i.test(excludePostId) ? { _id: { $ne: excludePostId } } : {}),
+  };
+  const requestSeed = String(query.seed || new Date().toISOString().slice(0, 10))
+    .trim()
+    .slice(0, 120);
+  const seed = `${userId || "guest"}:${requestSeed || "finspo"}:${excludePostId}`;
+
+  if (userId) await ensureShadowProfile(userId);
+
+  const [profile, candidates] = await Promise.all([
+    userId ? ShadowProfile.findOne({ userId }).lean() : Promise.resolve(null),
+    GalleryPost.find(galleryFilter)
+      .select("_id createdAt tags userId")
+      .sort({ createdAt: -1, _id: -1 })
+      .lean(),
+  ]);
+  const tieRandom = createSeededRandom(`${seed}:scores`);
+  const scored = candidates.map((post) => ({
+    post,
+    score: scoreFinspo(profile, post),
+    tie: tieRandom(),
+  }));
+  const personalized = scored
+    .sort((left, right) => right.score - left.score || left.tie - right.tie)
+    .map(({ post }) => post);
+  const composed = composeFinspoFeed({
+    fresh: candidates,
+    newCount: FINSPO_FEED.NEW_COUNT,
+    pageSize: FINSPO_FEED.PAGE_SIZE,
+    personalized,
+    personalizedCount: FINSPO_FEED.PERSONALIZED_COUNT,
+    seed,
+  });
+  const start = (page - 1) * FINSPO_FEED.PAGE_SIZE;
+  const selected = composed.results.slice(start, start + FINSPO_FEED.PAGE_SIZE);
+  const selectedIds = selected.map((post) => post._id);
+  const hydratedPosts = selectedIds.length
+    ? await GalleryPost.find({ _id: { $in: selectedIds }, isArchived: { $ne: true } })
+        .populate("userId", "name username profilePhoto isKycVerified")
+        .lean()
+    : [];
+  const postsById = new Map(hydratedPosts.map((post) => [idValue(post._id), post]));
+  const posts = selectedIds.map((id) => postsById.get(idValue(id))).filter(Boolean);
+  const total = composed.results.length;
+
+  return {
+    feed: {
+      allocations: composed.allocations[page - 1] || {
+        fallback: 0,
+        new: 0,
+        personalized: 0,
+      },
+      newCount: FINSPO_FEED.NEW_COUNT,
+      pageSize: FINSPO_FEED.PAGE_SIZE,
+      personalized: scored.some(({ score }) => score > 0),
+      personalizedCount: FINSPO_FEED.PERSONALIZED_COUNT,
+    },
+    page,
+    pages: Math.max(Math.ceil(total / FINSPO_FEED.PAGE_SIZE), 1),
+    posts,
+    total,
+  };
+};
+
 const buildSuggestedFeed = async ({ query, userId }) => {
   const page = Math.max(Number(query.page || 1), 1);
   const { filter, locationFilter } = await listingFilter(query, userId);
@@ -476,9 +730,12 @@ module.exports = {
   awardListingSignal,
   awardPurchaseForOrder,
   backfillShadowProfiles,
+  buildFinspoAccountSuggestions,
+  buildFinspoFeed,
   buildRecommendationFeed,
   buildSuggestedFeed,
   dwellPoints,
   ensureShadowProfile,
+  scoreFinspo,
   scoreListing,
 };

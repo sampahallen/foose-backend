@@ -1,5 +1,6 @@
 const Event = require("../models/Event");
 const DigiShop = require("../models/DigiShop");
+const FinspoComment = require("../models/FinspoComment");
 const GalleryPost = require("../models/GalleryPost");
 const Listing = require("../models/Listing");
 const User = require("../models/User");
@@ -8,15 +9,74 @@ const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
 const { RECOMMENDATION_SIGNALS } = require("../constants/recommendations");
-const { awardFinspoSignal } = require("../services/recommendationService");
+const {
+  awardFinspoSignal,
+  buildFinspoAccountSuggestions,
+} = require("../services/recommendationService");
 const { normalizeHashtags } = require("../utils/hashtags");
 const { syncFinspoHashtags } = require("../services/hashtagService");
+const {
+  notifyFinspoComment,
+  notifyFinspoCommentLike,
+  notifyFinspoPostLike,
+  notifyFinspoReply,
+} = require("../services/finspoNotificationService");
+const {
+  runSearchSync,
+  syncEventSearchDocument,
+  syncFinspoSearchDocument,
+} = require("../services/searchIndexService");
+const {
+  FINSPO_ARCHIVE_RETENTION_DAYS,
+  expiredArchivedFinspoFilter,
+  finspoArchiveExpiresAt,
+  finspoArchiveTimestamp,
+  finspoRestoreSnapshots,
+  isArchivedFinspoExpired,
+  unexpiredArchivedFinspoFilter,
+} = require("../utils/finspoLifecycle");
+
+const ACTIVE_ACCOUNT_FILTER = {
+  $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }],
+};
 
 const pageOptions = (query) => {
   const page = Math.max(Number(query.page || 1), 1);
   const limit = Math.min(Math.max(Number(query.limit || 20), 1), 100);
   return { page, limit, skip: (page - 1) * limit };
 };
+
+const FINSPO_COMMENT_POPULATE = [
+  { path: "userId", select: "name username profilePhoto isKycVerified" },
+  { path: "replyToUserId", select: "name username profilePhoto isKycVerified" },
+];
+
+const serializeFinspoComment = (comment, viewerId) => {
+  const value = typeof comment?.toObject === "function" ? comment.toObject() : comment;
+  const likes = Array.isArray(value?.likes) ? value.likes : [];
+
+  return {
+    _id: value._id,
+    postId: value.postId,
+    body: value.body,
+    userId: value.userId || null,
+    rootCommentId: value.rootCommentId || null,
+    replyToCommentId: value.replyToCommentId || null,
+    replyToUserId: value.replyToUserId || null,
+    liked: Boolean(viewerId && likes.some((id) => id.toString() === viewerId)),
+    likeCount: likes.length,
+    replyCount: Number(value.replyCount) || 0,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+};
+
+const activeGalleryPostFilter = (postId) => ({
+  _id: postId,
+  isArchived: { $ne: true },
+});
+
+const finspoActor = (req) => req.currentUser;
 
 const promotionTags = (value) => {
   if (!value) return [];
@@ -126,32 +186,41 @@ const revokePastEventPromotions = async () => {
   const todayStart = new Date(now);
   todayStart.setUTCHours(0, 0, 0, 0);
 
+  const expiringFilter = {
+    $and: [
+      {
+        $or: [
+          { endsAt: { $lt: now } },
+          { endsAt: { $exists: false }, date: { $lt: todayStart } },
+          { endsAt: null, date: { $lt: todayStart } },
+        ],
+      },
+      {
+        $or: [
+          { status: { $ne: "past" } },
+          { promotionTags: { $exists: true, $ne: [] } },
+          { promotionExpiresAt: { $exists: true, $ne: null } },
+        ],
+      },
+    ],
+  };
+  const expiringEvents = await Event.find(expiringFilter).select("_id").lean();
   const result = await Event.updateMany(
-    {
-      $and: [
-        {
-          $or: [
-            { endsAt: { $lt: now } },
-            { endsAt: { $exists: false }, date: { $lt: todayStart } },
-            { endsAt: null, date: { $lt: todayStart } },
-          ],
-        },
-        {
-          $or: [
-            { status: { $ne: "past" } },
-            { promotionTags: { $exists: true, $ne: [] } },
-            { promotionExpiresAt: { $exists: true, $ne: null } },
-          ],
-        },
-      ],
-    },
+    expiringFilter,
     {
       $set: { status: "past", promotionTags: [] },
       $unset: { promotionExpiresAt: "" },
     },
   );
 
-  if (result.modifiedCount) await invalidateEventCaches();
+  if (result.modifiedCount) {
+    await Promise.all([
+      invalidateEventCaches(),
+      ...expiringEvents.map((event) =>
+        runSearchSync(`event:${event._id}:expire`, () =>
+          syncEventSearchDocument(event._id))),
+    ]);
+  }
 };
 
 const invalidateEventCaches = async (...eventIds) => {
@@ -313,6 +382,8 @@ exports.createEvent = asyncHandler(async (req, res) => {
   });
 
   await invalidateEventCaches(event._id);
+  await runSearchSync(`event:${event._id}:create`, () =>
+    syncEventSearchDocument(event._id));
 
   const createdEvent = await Event.findById(event._id).populate(EVENT_MANAGE_POPULATE).lean();
   return success(res, { event: serializeEvent(createdEvent) }, "Event created", 201);
@@ -334,6 +405,8 @@ exports.updateEvent = asyncHandler(async (req, res) => {
 
   await event.save();
   await invalidateEventCaches(event._id);
+  await runSearchSync(`event:${event._id}:update`, () =>
+    syncEventSearchDocument(event._id));
 
   const updatedEvent = await Event.findById(event._id).populate(EVENT_MANAGE_POPULATE).lean();
   return success(res, { event: serializeEvent(updatedEvent) }, "Event updated");
@@ -347,6 +420,8 @@ exports.deleteEvent = asyncHandler(async (req, res) => {
   }
 
   await invalidateEventCaches(event._id);
+  await runSearchSync(`event:${event._id}:delete`, () =>
+    syncEventSearchDocument(event._id));
 
   return success(res, { event }, "Event deleted");
 });
@@ -416,15 +491,15 @@ exports.toggleAttend = asyncHandler(async (req, res) => {
 
 exports.listGallery = asyncHandler(async (req, res) => {
   const { page, limit, skip } = pageOptions(req.query);
-  const data = await withCache(`gallery:page:${page}`, 120, async () => {
+  const data = await withCache(`gallery:page:${page}:limit:${limit}`, 120, async () => {
     const [posts, total] = await Promise.all([
-      GalleryPost.find()
+      GalleryPost.find({ isArchived: { $ne: true } })
         .populate("userId", "name username profilePhoto isKycVerified")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      GalleryPost.countDocuments(),
+      GalleryPost.countDocuments({ isArchived: { $ne: true } }),
     ]);
 
     return { posts, total, page, pages: Math.ceil(total / limit) };
@@ -439,12 +514,39 @@ exports.getGalleryPost = asyncHandler(async (req, res) => {
     .lean();
 
   if (!post) throw httpError(404, "Gallery post not found");
+  if (isArchivedFinspoExpired(post)) {
+    const deletedPost = await GalleryPost.findOneAndDelete({
+      _id: post._id,
+      ...expiredArchivedFinspoFilter(),
+    });
+    if (deletedPost) await FinspoComment.deleteMany({ postId: post._id });
+    if (deletedPost) {
+      await runSearchSync(`finspo:${post._id}:expire`, () =>
+        syncFinspoSearchDocument(post._id));
+    }
+    throw httpError(404, "Gallery post not found");
+  }
+  const ownerId = post.userId && typeof post.userId === "object" ? post.userId._id : post.userId;
+  if (post.isArchived && String(ownerId || "") !== String(req.user?.id || "")) {
+    throw httpError(404, "Gallery post not found");
+  }
 
-  return success(res, { post }, "Gallery post loaded");
+  const serializedPost = post.isArchived
+    ? {
+        ...post,
+        archiveDeleteAt: finspoArchiveExpiresAt(post),
+        archivedAt: finspoArchiveTimestamp(post),
+      }
+    : post;
+
+  return success(res, { post: serializedPost }, "Gallery post loaded");
 });
 
 exports.listMyGallery = asyncHandler(async (req, res) => {
-  const posts = await GalleryPost.find({ userId: req.user.id })
+  const posts = await GalleryPost.find({
+    isArchived: { $ne: true },
+    userId: req.user.id,
+  })
     .populate("userId", "name username profilePhoto isKycVerified")
     .sort({ createdAt: -1 })
     .lean();
@@ -452,21 +554,426 @@ exports.listMyGallery = asyncHandler(async (req, res) => {
   return success(res, { posts, total: posts.length });
 });
 
+exports.listMyArchivedGallery = asyncHandler(async (req, res) => {
+  const posts = await GalleryPost.find({
+    ...unexpiredArchivedFinspoFilter(),
+    userId: req.user.id,
+  })
+    .populate("userId", "name username profilePhoto isKycVerified")
+    .sort({ archivedAt: -1, updatedAt: -1 })
+    .lean();
+  const serializedPosts = posts.map((post) => ({
+    ...post,
+    archiveDeleteAt: finspoArchiveExpiresAt(post),
+    archivedAt: finspoArchiveTimestamp(post),
+  }));
+
+  return success(
+    res,
+    {
+      posts: serializedPosts,
+      retentionDays: FINSPO_ARCHIVE_RETENTION_DAYS,
+      total: serializedPosts.length,
+    },
+    "Archived Finspo loaded",
+  );
+});
+
 exports.listFollowingGallery = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select("following").lean();
   const following = user?.following || [];
+  const activeFollowing = following.length
+    ? await User.distinct("_id", {
+        ...ACTIVE_ACCOUNT_FILTER,
+        _id: { $in: following, $ne: req.user.id },
+      })
+    : [];
 
-  if (!following.length) {
-    return success(res, { posts: [], total: 0 }, "Following gallery loaded");
+  if (!activeFollowing.length) {
+    const { suggestedAccounts, suggestionMeta } = await buildFinspoAccountSuggestions({
+      excludedUserIds: following,
+      userId: req.user.id,
+    });
+
+    return success(
+      res,
+      {
+        followingCount: 0,
+        posts: [],
+        suggestedAccounts,
+        suggestionMeta,
+        total: 0,
+      },
+      "Following gallery loaded",
+    );
   }
 
-  const posts = await GalleryPost.find({ userId: { $in: following } })
+  const posts = await GalleryPost.find({
+    isArchived: { $ne: true },
+    userId: { $in: activeFollowing },
+  })
     .populate("userId", "name username profilePhoto isKycVerified")
     .sort({ createdAt: -1 })
     .limit(60)
     .lean();
 
-  return success(res, { posts, total: posts.length }, "Following gallery loaded");
+  return success(
+    res,
+    {
+      followingCount: activeFollowing.length,
+      posts,
+      suggestedAccounts: [],
+      suggestionMeta: null,
+      total: posts.length,
+    },
+    "Following gallery loaded",
+  );
+});
+
+exports.listFinspoComments = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findOne(activeGalleryPostFilter(req.params.id))
+    .select("_id commentCount")
+    .lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const { page, limit, skip } = pageOptions(req.query);
+  const filter = { postId: post._id, rootCommentId: null };
+  const [comments, total] = await Promise.all([
+    FinspoComment.find(filter)
+      .populate(FINSPO_COMMENT_POPULATE)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    FinspoComment.countDocuments(filter),
+  ]);
+
+  return success(
+    res,
+    {
+      comments: comments.map((comment) => serializeFinspoComment(comment, req.user?.id)),
+      total,
+      totalComments: Number(post.commentCount) || 0,
+      page,
+      pages: Math.ceil(total / limit),
+    },
+    "Finspo comments loaded",
+  );
+});
+
+exports.listFinspoCommentReplies = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findOne(activeGalleryPostFilter(req.params.id))
+    .select("_id commentCount")
+    .lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const target = await FinspoComment.findOne({
+    _id: req.params.commentId,
+    postId: post._id,
+  })
+    .select("_id rootCommentId")
+    .lean();
+  if (!target) throw httpError(404, "Finspo comment not found");
+
+  const rootCommentId = target.rootCommentId || target._id;
+  if (target.rootCommentId) {
+    const rootExists = await FinspoComment.exists({
+      _id: rootCommentId,
+      postId: post._id,
+      rootCommentId: null,
+    });
+    if (!rootExists) throw httpError(404, "Finspo comment thread not found");
+  }
+
+  const { page, limit, skip } = pageOptions(req.query);
+  const filter = { postId: post._id, rootCommentId };
+  const [replies, total] = await Promise.all([
+    FinspoComment.find(filter)
+      .populate(FINSPO_COMMENT_POPULATE)
+      .sort({ createdAt: 1, _id: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    FinspoComment.countDocuments(filter),
+  ]);
+
+  return success(
+    res,
+    {
+      replies: replies.map((reply) => serializeFinspoComment(reply, req.user?.id)),
+      rootCommentId,
+      rootReplyCount: total,
+      total,
+      totalComments: Number(post.commentCount) || 0,
+      page,
+      pages: Math.ceil(total / limit),
+    },
+    "Finspo comment replies loaded",
+  );
+});
+
+exports.getFinspoCommentContext = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findOne(activeGalleryPostFilter(req.params.id))
+    .select("_id commentCount")
+    .lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const target = await FinspoComment.findOne({
+    _id: req.params.commentId,
+    postId: post._id,
+  })
+    .populate(FINSPO_COMMENT_POPULATE)
+    .lean();
+  if (!target) throw httpError(404, "Finspo comment not found");
+
+  const rootCommentId = target.rootCommentId || target._id;
+  let rootComment = target;
+  if (target.rootCommentId) {
+    rootComment = await FinspoComment.findOne({
+      _id: rootCommentId,
+      postId: post._id,
+      rootCommentId: null,
+    })
+      .populate(FINSPO_COMMENT_POPULATE)
+      .lean();
+    if (!rootComment) throw httpError(404, "Finspo comment thread not found");
+  }
+
+  return success(
+    res,
+    {
+      isReply: Boolean(target.rootCommentId),
+      rootComment: serializeFinspoComment(rootComment, req.user?.id),
+      rootCommentId,
+      target: serializeFinspoComment(target, req.user?.id),
+      totalComments: Number(post.commentCount) || 0,
+    },
+    "Finspo comment context loaded",
+  );
+});
+
+exports.createFinspoComment = asyncHandler(async (req, res) => {
+  const filter = activeGalleryPostFilter(req.params.id);
+  const post = await GalleryPost.findOne(filter).select("_id userId").lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const comment = await FinspoComment.create({
+    postId: post._id,
+    userId: req.user.id,
+    body: req.body.body,
+  });
+
+  let countedPost;
+  try {
+    countedPost = await GalleryPost.findOneAndUpdate(
+      filter,
+      { $inc: { commentCount: 1 } },
+      { new: true, runValidators: true },
+    ).select("_id commentCount");
+  } catch (error) {
+    await FinspoComment.deleteOne({ _id: comment._id });
+    throw error;
+  }
+
+  if (!countedPost) {
+    await FinspoComment.deleteOne({ _id: comment._id });
+    throw httpError(404, "Gallery post not found");
+  }
+
+  await comment.populate(FINSPO_COMMENT_POPULATE);
+  await invalidatePattern("gallery:page:*");
+
+  void notifyFinspoComment({
+    actor: finspoActor(req),
+    comment,
+    postId: post._id,
+    recipientId: post.userId,
+  });
+
+  return success(
+    res,
+    {
+      comment: serializeFinspoComment(comment, req.user.id),
+      totalComments: Number(countedPost.commentCount) || 0,
+    },
+    "Finspo comment created",
+    201,
+  );
+});
+
+exports.createFinspoCommentReply = asyncHandler(async (req, res) => {
+  const postFilter = activeGalleryPostFilter(req.params.id);
+  const post = await GalleryPost.findOne(postFilter).select("_id").lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const target = await FinspoComment.findOne({
+    _id: req.params.commentId,
+    postId: post._id,
+  }).select("_id rootCommentId userId");
+  if (!target) throw httpError(404, "Finspo comment not found");
+
+  const rootCommentId = target.rootCommentId || target._id;
+  const root = await FinspoComment.findOne({
+    _id: rootCommentId,
+    postId: post._id,
+    rootCommentId: null,
+  }).select("_id");
+  if (!root) throw httpError(404, "Finspo comment thread not found");
+
+  const reply = await FinspoComment.create({
+    postId: post._id,
+    userId: req.user.id,
+    body: req.body.body,
+    rootCommentId: root._id,
+    replyToCommentId: target._id,
+    replyToUserId: target.userId,
+  });
+
+  let countedPost;
+  try {
+    countedPost = await GalleryPost.findOneAndUpdate(
+      postFilter,
+      { $inc: { commentCount: 1 } },
+      { new: true, runValidators: true },
+    ).select("_id commentCount");
+  } catch (error) {
+    await FinspoComment.deleteOne({ _id: reply._id });
+    throw error;
+  }
+
+  if (!countedPost) {
+    await FinspoComment.deleteOne({ _id: reply._id });
+    throw httpError(404, "Gallery post not found");
+  }
+
+  let countedRoot;
+  try {
+    countedRoot = await FinspoComment.findOneAndUpdate(
+      { _id: root._id, postId: post._id, rootCommentId: null },
+      { $inc: { replyCount: 1 } },
+      { new: true, runValidators: true },
+    ).select("_id replyCount");
+  } catch (error) {
+    await Promise.all([
+      FinspoComment.deleteOne({ _id: reply._id }),
+      GalleryPost.updateOne(
+        { _id: post._id, commentCount: { $gt: 0 } },
+        { $inc: { commentCount: -1 } },
+      ),
+    ]);
+    throw error;
+  }
+
+  if (!countedRoot) {
+    await Promise.all([
+      FinspoComment.deleteOne({ _id: reply._id }),
+      GalleryPost.updateOne(
+        { _id: post._id, commentCount: { $gt: 0 } },
+        { $inc: { commentCount: -1 } },
+      ),
+    ]);
+    throw httpError(404, "Finspo comment thread not found");
+  }
+
+  if (target._id.toString() !== root._id.toString()) {
+    let countedTarget;
+    try {
+      countedTarget = await FinspoComment.findOneAndUpdate(
+        { _id: target._id, postId: post._id },
+        { $inc: { replyCount: 1 } },
+        { new: true, runValidators: true },
+      ).select("_id");
+    } catch (error) {
+      await Promise.all([
+        FinspoComment.deleteOne({ _id: reply._id }),
+        GalleryPost.updateOne(
+          { _id: post._id, commentCount: { $gt: 0 } },
+          { $inc: { commentCount: -1 } },
+        ),
+        FinspoComment.updateOne(
+          { _id: root._id, replyCount: { $gt: 0 } },
+          { $inc: { replyCount: -1 } },
+        ),
+      ]);
+      throw error;
+    }
+
+    if (!countedTarget) {
+      await Promise.all([
+        FinspoComment.deleteOne({ _id: reply._id }),
+        GalleryPost.updateOne(
+          { _id: post._id, commentCount: { $gt: 0 } },
+          { $inc: { commentCount: -1 } },
+        ),
+        FinspoComment.updateOne(
+          { _id: root._id, replyCount: { $gt: 0 } },
+          { $inc: { replyCount: -1 } },
+        ),
+      ]);
+      throw httpError(404, "Reply target not found");
+    }
+  }
+
+  await reply.populate(FINSPO_COMMENT_POPULATE);
+  await invalidatePattern("gallery:page:*");
+
+  void notifyFinspoReply({
+    actor: finspoActor(req),
+    postId: post._id,
+    recipientId: target.userId,
+    reply,
+  });
+
+  return success(
+    res,
+    {
+      reply: serializeFinspoComment(reply, req.user.id),
+      rootCommentId: root._id,
+      rootReplyCount: Number(countedRoot.replyCount) || 0,
+      totalComments: Number(countedPost.commentCount) || 0,
+    },
+    "Finspo reply created",
+    201,
+  );
+});
+
+exports.toggleFinspoCommentLike = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findOne(activeGalleryPostFilter(req.params.id))
+    .select("_id")
+    .lean();
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  const comment = await FinspoComment.findOne({
+    _id: req.params.commentId,
+    postId: post._id,
+  });
+  if (!comment) throw httpError(404, "Finspo comment not found");
+
+  const userId = req.user.id;
+  const hasLiked = comment.likes.some((id) => id.toString() === userId);
+  if (hasLiked) {
+    comment.likes = comment.likes.filter((id) => id.toString() !== userId);
+  } else {
+    comment.likes.push(userId);
+  }
+  await comment.save();
+  if (!hasLiked) {
+    void notifyFinspoCommentLike({
+      actor: finspoActor(req),
+      comment,
+      postId: post._id,
+      recipientId: comment.userId,
+    });
+  }
+  return success(
+    res,
+    {
+      commentId: comment._id,
+      liked: !hasLiked,
+      likeCount: comment.likes.length,
+    },
+    "Finspo comment like updated",
+  );
 });
 
 exports.createGalleryPost = asyncHandler(async (req, res) => {
@@ -483,6 +990,8 @@ exports.createGalleryPost = asyncHandler(async (req, res) => {
   });
 
   await syncFinspoHashtags(null, post);
+  await runSearchSync(`finspo:${post._id}:create`, () =>
+    syncFinspoSearchDocument(post._id));
 
   await invalidatePattern("gallery:page:*");
 
@@ -490,7 +999,11 @@ exports.createGalleryPost = asyncHandler(async (req, res) => {
 });
 
 exports.updateGalleryPost = asyncHandler(async (req, res) => {
-  const post = await GalleryPost.findOne({ _id: req.params.id, userId: req.user.id });
+  const post = await GalleryPost.findOne({
+    _id: req.params.id,
+    userId: req.user.id,
+    isArchived: { $ne: true },
+  });
 
   if (!post) {
     throw httpError(404, "Gallery post not found");
@@ -505,27 +1018,107 @@ exports.updateGalleryPost = asyncHandler(async (req, res) => {
 
   await post.save();
   await syncFinspoHashtags(previousPost, post);
+  await runSearchSync(`finspo:${post._id}:update`, () =>
+    syncFinspoSearchDocument(post._id));
   await invalidatePattern("gallery:page:*");
 
   return success(res, { post }, "Gallery post updated");
 });
 
 exports.deleteGalleryPost = asyncHandler(async (req, res) => {
-  const post = await GalleryPost.findOne({ _id: req.params.id, userId: req.user.id });
+  const post = await GalleryPost.findOneAndDelete({
+    _id: req.params.id,
+    userId: req.user.id,
+  });
 
   if (!post) {
     throw httpError(404, "Gallery post not found");
   }
 
-  await post.deleteOne();
+  await FinspoComment.deleteMany({ postId: post._id });
   await syncFinspoHashtags(post, null);
+  await runSearchSync(`finspo:${post._id}:delete`, () =>
+    syncFinspoSearchDocument(post._id));
   await invalidatePattern("gallery:page:*");
 
   return success(res, { post }, "Gallery post deleted");
 });
 
+exports.archiveGalleryPost = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findOne({ _id: req.params.id, userId: req.user.id });
+  if (!post) throw httpError(404, "Gallery post not found");
+
+  if (isArchivedFinspoExpired(post)) {
+    const deletedPost = await GalleryPost.findOneAndDelete({
+      _id: post._id,
+      ...expiredArchivedFinspoFilter(),
+    });
+    if (deletedPost) await FinspoComment.deleteMany({ postId: post._id });
+    if (deletedPost) {
+      await runSearchSync(`finspo:${post._id}:expire`, () =>
+        syncFinspoSearchDocument(post._id));
+    }
+    throw httpError(404, "Gallery post not found");
+  }
+
+  if (!post.isArchived) {
+    const previousPost = post.toObject();
+    const archivedAt = new Date();
+    post.isArchived = true;
+    post.archivedAt = archivedAt;
+    post.archiveDeleteAt = finspoArchiveExpiresAt({ archivedAt });
+    await post.save();
+    await syncFinspoHashtags(previousPost, post);
+    await runSearchSync(`finspo:${post._id}:archive`, () =>
+      syncFinspoSearchDocument(post._id));
+    await invalidatePattern("gallery:page:*");
+  } else if (!post.archiveDeleteAt) {
+    const archivedAt = finspoArchiveTimestamp(post);
+    post.archivedAt = archivedAt;
+    post.archiveDeleteAt = finspoArchiveExpiresAt(post);
+    await post.save();
+  }
+
+  await FinspoComment.updateMany(
+    { postId: post._id },
+    { $set: { postDeleteAt: post.archiveDeleteAt } },
+  );
+
+  return success(res, { post }, "Gallery post archived");
+});
+
+exports.restoreGalleryPost = asyncHandler(async (req, res) => {
+  const post = await GalleryPost.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      userId: req.user.id,
+      ...unexpiredArchivedFinspoFilter(),
+    },
+    {
+      $set: { isArchived: false },
+      $unset: { archiveDeleteAt: "", archivedAt: "" },
+    },
+    { new: true, runValidators: true },
+  );
+  if (!post) throw httpError(404, "Archived gallery post not found");
+
+  await FinspoComment.updateMany(
+    { postId: post._id },
+    { $unset: { postDeleteAt: "" } },
+  );
+
+  const { after, before } = finspoRestoreSnapshots(post);
+  await syncFinspoHashtags(before, after);
+  await runSearchSync(`finspo:${post._id}:restore`, () =>
+    syncFinspoSearchDocument(post._id));
+  await invalidatePattern("gallery:page:*");
+  await post.populate("userId", "name username profilePhoto isKycVerified");
+
+  return success(res, { post }, "Gallery post restored");
+});
+
 exports.toggleLike = asyncHandler(async (req, res) => {
-  const post = await GalleryPost.findById(req.params.id);
+  const post = await GalleryPost.findOne({ _id: req.params.id, isArchived: { $ne: true } });
   if (!post) throw httpError(404, "Gallery post not found");
 
   const userId = req.user.id;
@@ -548,13 +1141,20 @@ exports.toggleLike = asyncHandler(async (req, res) => {
     ).catch((error) => {
       console.warn(`Finspo recommendation signal failed: ${error.message}`);
     });
+    void notifyFinspoPostLike({
+      actor: finspoActor(req),
+      postId: post._id,
+      recipientId: post.userId,
+    });
   }
 
   return success(res, { post, liked: !hasLiked, likeCount: post.likes.length }, "Like updated");
 });
 
 exports.getLikeStatus = asyncHandler(async (req, res) => {
-  const post = await GalleryPost.findById(req.params.id).select("likes").lean();
+  const post = await GalleryPost.findOne({ _id: req.params.id, isArchived: { $ne: true } })
+    .select("likes")
+    .lean();
   if (!post) throw httpError(404, "Gallery post not found");
 
   const liked = post.likes.some((id) => id.toString() === req.user.id);

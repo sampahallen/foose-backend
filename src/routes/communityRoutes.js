@@ -2,6 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/communityController");
 const auth = require("../middleware/authMiddleware");
+const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const validate = require("../middleware/validateMiddleware");
 const { singleImage } = require("../middleware/uploadMiddleware");
 
@@ -24,6 +25,20 @@ const eventBody = z.object({
 const galleryBody = z.object({
   caption: z.string().optional(),
   tags: z.any().optional(),
+}).strict();
+
+const objectId = z.string().regex(/^[a-f\d]{24}$/i, "Invalid resource id");
+const commentBody = z.object({
+  body: z.string().trim().min(1, "Comment is required").max(1000),
+}).strict();
+const commentPaginationQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+}).strict();
+const galleryCommentParams = z.object({ id: objectId }).strict();
+const galleryCommentReplyParams = z.object({
+  commentId: objectId,
+  id: objectId,
 }).strict();
 
 router.get("/events", controller.listEvents);
@@ -89,10 +104,83 @@ router.put(
 router.delete("/events/:id", auth, controller.deleteEvent);
 router.post("/events/:id/attend", auth, controller.toggleAttend);
 router.get("/gallery", controller.listGallery);
+router.get("/gallery/me/archived", auth, controller.listMyArchivedGallery);
 router.get("/gallery/me", auth, controller.listMyGallery);
 router.get("/gallery/following", auth, controller.listFollowingGallery);
+router.get(
+  "/gallery/:id/comments",
+  optionalAuth,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: galleryCommentParams,
+      query: commentPaginationQuery,
+    }),
+  ),
+  controller.listFinspoComments,
+);
+router.get(
+  "/gallery/:id/comments/:commentId/context",
+  optionalAuth,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: galleryCommentReplyParams,
+      query: z.object({}).strict(),
+    }),
+  ),
+  controller.getFinspoCommentContext,
+);
+router.get(
+  "/gallery/:id/comments/:commentId/replies",
+  optionalAuth,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: galleryCommentReplyParams,
+      query: commentPaginationQuery,
+    }),
+  ),
+  controller.listFinspoCommentReplies,
+);
+router.post(
+  "/gallery/:id/comments",
+  auth,
+  validate(
+    z.object({
+      body: commentBody,
+      params: galleryCommentParams,
+      query: z.object({}).strict(),
+    }),
+  ),
+  controller.createFinspoComment,
+);
+router.post(
+  "/gallery/:id/comments/:commentId/replies",
+  auth,
+  validate(
+    z.object({
+      body: commentBody,
+      params: galleryCommentReplyParams,
+      query: z.object({}).strict(),
+    }),
+  ),
+  controller.createFinspoCommentReply,
+);
+router.post(
+  "/gallery/:id/comments/:commentId/like",
+  auth,
+  validate(
+    z.object({
+      body: z.object({}).strict().optional(),
+      params: galleryCommentReplyParams,
+      query: z.object({}).strict(),
+    }),
+  ),
+  controller.toggleFinspoCommentLike,
+);
 router.get("/gallery/:id/like", auth, controller.getLikeStatus);
-router.get("/gallery/:id", controller.getGalleryPost);
+router.get("/gallery/:id", optionalAuth, controller.getGalleryPost);
 router.post(
   "/gallery",
   auth,
@@ -120,6 +208,8 @@ router.put(
   controller.updateGalleryPost,
 );
 router.delete("/gallery/:id", auth, controller.deleteGalleryPost);
+router.post("/gallery/:id/archive", auth, controller.archiveGalleryPost);
+router.post("/gallery/:id/restore", auth, controller.restoreGalleryPost);
 router.post("/gallery/:id/like", auth, controller.toggleLike);
 
 module.exports = router;

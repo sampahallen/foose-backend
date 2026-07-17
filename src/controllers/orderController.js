@@ -11,6 +11,10 @@ const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
 const { initializeTransaction } = require("../services/paystackService");
 const { awardPurchaseForOrder } = require("../services/recommendationService");
+const {
+  runSearchSync,
+  syncListingSearchDocument,
+} = require("../services/searchIndexService");
 
 const SELLER_ACTION_WINDOW_MS = 48 * 60 * 60 * 1000;
 const ESCROW_RELEASE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -109,6 +113,13 @@ const assertSellerCanAct = (order, userId) => {
     throw httpError(403, "Only the shop owner can update this order");
   }
 };
+
+const syncOrderLineListings = (orderLines, reason) =>
+  Promise.all(
+    [...new Set(orderLines.map((line) => String(line.listing._id)))].map((listingId) =>
+      runSearchSync(`listing:${listingId}:${reason}`, () =>
+        syncListingSearchDocument(listingId))),
+  );
 
 exports.placeOrder = asyncHandler(async (req, res) => {
   const requestedItems = req.body.items || [];
@@ -243,6 +254,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       );
     }),
   );
+  await syncOrderLineListings(orderLines, "stock-update");
 
   await invalidate(
     "listings:featured",
@@ -305,6 +317,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
           ),
         ),
       ]);
+      await syncOrderLineListings(orderLines, "checkout-rollback");
 
       throw error;
     }

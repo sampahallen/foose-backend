@@ -6,6 +6,7 @@ const connectDB = require("./src/config/db");
 const { connectRedis } = require("./src/config/redis");
 const { initSocket } = require("./src/config/socket");
 const { startAccountLifecycleCleanup } = require("./src/utils/accountLifecycle");
+const { startFinspoLifecycleCleanup } = require("./src/utils/finspoLifecycle");
 const { backfillShadowProfiles } = require("./src/services/recommendationService");
 const { backfillMarketplaceLocations } = require("./src/services/locationBackfillService");
 const { invalidate, invalidatePattern } = require("./src/utils/cache");
@@ -46,6 +47,7 @@ const start = async () => {
       console.warn(`Location backfill failed: ${error.message}`);
     }
     startAccountLifecycleCleanup();
+    startFinspoLifecycleCleanup();
   } catch (error) {
     console.error("MongoDB connection failed:", error.message);
     // Don't crash - let the server run

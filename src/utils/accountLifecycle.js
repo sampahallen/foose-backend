@@ -1,5 +1,9 @@
 const DEACTIVATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const {
+  removeUserSearchDocuments,
+  runSearchSync,
+} = require("../services/searchIndexService");
 
 const deletionUsername = (user) => `deleted.${user._id.toString().slice(-12)}`;
 
@@ -15,6 +19,8 @@ const deactivateUser = async (user) => {
   user.emailVerifyExpires = undefined;
   user.refreshTokens = [];
   await user.save();
+  await runSearchSync(`user:${user._id}:deactivate`, () =>
+    removeUserSearchDocuments(user._id));
   return user;
 };
 
@@ -41,6 +47,8 @@ const softDeleteUser = async (user) => {
   user.resetPasswordExpires = undefined;
   user.refreshTokens = [];
   await user.save();
+  await runSearchSync(`user:${user._id}:delete`, () =>
+    removeUserSearchDocuments(user._id));
   const ShadowProfile = require("../models/ShadowProfile");
   await ShadowProfile.deleteOne({ userId: user._id });
   return user;
