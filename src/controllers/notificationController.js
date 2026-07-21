@@ -2,12 +2,14 @@ const Notification = require("../models/Notification");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { chatUserRoom, notificationUserRoom } = require("../socket/rooms");
 
-const emitNotificationRead = (userId, payload) => {
+const emitNotificationRead = (userId, payload, type = "system") => {
   try {
     const { getIO } = require("../config/socket");
     const io = typeof getIO === "function" ? getIO() : null;
-    if (io) io.to(userId.toString()).emit("notification-read", payload);
+    const room = type === "chat" ? chatUserRoom(userId) : notificationUserRoom(userId);
+    if (io) io.to(room).emit("notification-read", payload);
   } catch {
     // REST state is authoritative; realtime read updates are best-effort.
   }
@@ -50,7 +52,7 @@ exports.markRead = asyncHandler(async (req, res) => {
   emitNotificationRead(req.user.id, {
     notification,
     notificationId: notification._id,
-  });
+  }, notification.type);
 
   return success(res, { notification }, "Notification marked as read");
 });

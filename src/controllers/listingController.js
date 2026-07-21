@@ -108,6 +108,11 @@ exports.listListings = asyncHandler(async (req, res) => {
   const { page, limit, skip } = pageOptions(req.query);
   const filter = { status: "active", visibility: { $ne: "event" } };
 
+  if (req.user?.id) {
+    const ownShop = await DigiShop.findOne({ ownerId: req.user.id }).select("_id").lean();
+    if (ownShop) filter.shopId = { $ne: ownShop._id };
+  }
+
   ["category", "type", "gender", "condition", "color", "size", "brand"].forEach((field) => {
     if (req.query[field]) filter[field] = req.query[field];
   });
@@ -156,6 +161,24 @@ exports.getListing = asyncHandler(async (req, res) => {
   }
 
   return success(res, { listing }, "Listing loaded");
+});
+
+exports.getListingAvailability = asyncHandler(async (req, res) => {
+  const ids = req.validated.query.ids;
+  const [listings, ownShop] = await Promise.all([
+    Listing.find({ _id: { $in: ids } }).select("_id shopId status").lean(),
+    req.user?.id ? DigiShop.findOne({ ownerId: req.user.id }).select("_id").lean() : null,
+  ]);
+  const storedStatuses = new Map(listings.map((listing) => [String(listing._id), listing.status]));
+  const statuses = Object.fromEntries(ids.map((id) => {
+    const status = storedStatuses.get(id);
+    return [id, status === "active" || status === "sold" ? status : "removed"];
+  }));
+  const ownedListingIds = ownShop
+    ? listings.filter((listing) => String(listing.shopId) === String(ownShop._id)).map((listing) => String(listing._id))
+    : [];
+
+  return success(res, { ownedListingIds, statuses }, "Listing availability loaded");
 });
 
 exports.getShopListings = asyncHandler(async (req, res) => {

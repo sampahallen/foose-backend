@@ -31,7 +31,7 @@ const auth = asyncHandler(async (req, res, next) => {
   }
 
   const user = await User.findById(decoded.id).select(
-    "_id name email username phone roles role hasShop isKycVerified wallet kycId accountStatus",
+    "_id name email username phone roles role hasShop isEmailVerified isKycVerified wallet kycId accountStatus",
   );
 
   const accountStatus = user?.accountStatus || "active";
@@ -47,6 +47,7 @@ const auth = asyncHandler(async (req, res, next) => {
     id: user._id.toString(),
     roles: normalizeRoles(user.roles, user.role),
     hasShop: Boolean(user.hasShop),
+    isEmailVerified: Boolean(user.isEmailVerified),
     isKycVerified: Boolean(user.isKycVerified),
     email: user.email,
     phone: user.phone,

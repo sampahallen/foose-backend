@@ -272,7 +272,7 @@ const safeShop = (shop) => shop && ({
   totalReviews: shop.totalReviews || 0,
 });
 
-const hydrateItems = async (ids, listingFilter = {}) => {
+const hydrateItems = async (ids, listingFilter = {}, excludeOwnerId) => {
   if (!ids.length) return new Map();
   const listings = await Listing.find({
     _id: { $in: ids },
@@ -295,6 +295,7 @@ const hydrateItems = async (ids, listingFilter = {}) => {
   return new Map(listings.flatMap((listing) => {
     const shop = shopMap.get(String(listing.shopId));
     if (!shop || shop.isLive !== true || !ownerIds.has(String(shop.ownerId))) return [];
+    if (excludeOwnerId && String(shop.ownerId) === String(excludeOwnerId)) return [];
     return [[String(listing._id), { ...listing, shopId: safeShop(shop) }]];
   }));
 };
@@ -361,11 +362,11 @@ const hydrateUsers = async (ids) => {
   }]));
 };
 
-const hydrateSearchRows = async (rows) => {
+const hydrateSearchRows = async (rows, { excludeOwnerId } = {}) => {
   const ids = { item: [], finspo: [], event: [], user: [] };
   rows.forEach((row) => ids[row.sourceType]?.push(row.sourceId));
   const [items, finspo, events, users] = await Promise.all([
-    hydrateItems(ids.item),
+    hydrateItems(ids.item, {}, excludeOwnerId),
     hydrateFinspo(ids.finspo),
     hydrateEvents(ids.event),
     hydrateUsers(ids.user),
@@ -390,7 +391,7 @@ const visiblePrefixLength = (rows, visibleKeys, needed) => {
   return consumed;
 };
 
-const unifiedSearch = async ({ cursor, limit = 50, q, scope = "all", tag }) => {
+const unifiedSearch = async ({ cursor, excludeOwnerId, limit = 50, q, scope = "all", tag }) => {
   let mode = tag ? "tag" : "q";
   let query = tag ? normalizeHashtag(tag) : normalizeSearchText(q);
   if (!tag && String(q || "").trim().startsWith("#")) {
@@ -401,7 +402,12 @@ const unifiedSearch = async ({ cursor, limit = 50, q, scope = "all", tag }) => {
   if (mode === "q" && !textSearchExpression(query)) {
     throw httpError(422, "A search query must contain letters or numbers");
   }
-  const fingerprint = cursorFingerprint({ mode, query, scope });
+  const fingerprint = cursorFingerprint({
+    mode,
+    query,
+    scope,
+    ...(excludeOwnerId ? { excludeOwnerId: String(excludeOwnerId) } : {}),
+  });
   const state = decodeCursor(cursor, fingerprint);
   let counts = state.counts || { all: 0, items: 0, finspo: 0, events: 0, users: 0 };
   let total = state.counts?.[scope] || 0;
@@ -427,7 +433,7 @@ const unifiedSearch = async ({ cursor, limit = 50, q, scope = "all", tag }) => {
       break;
     }
 
-    const hydrated = await hydrateSearchRows(page.rows);
+    const hydrated = await hydrateSearchRows(page.rows, { excludeOwnerId });
     const hydratedByKey = new Map(hydrated.map((result) => [resultKey(result), result]));
     const remaining = limit - results.length;
     const consumedCount = visiblePrefixLength(page.rows, new Set(hydratedByKey.keys()), remaining);
@@ -696,7 +702,7 @@ const termSuggestionsFor = (entities, prefix) => {
     first.label.localeCompare(second.label));
 };
 
-const browseSuggestions = async ({ limit = BROWSE_SUGGESTION_LIMIT, q, ...filters }) => {
+const browseSuggestions = async ({ excludeOwnerId, limit = BROWSE_SUGGESTION_LIMIT, q, ...filters }) => {
   const query = normalizeSearchText(q).replace(/^#+/, "");
   if (query.length < 2) return { suggestions: [] };
   const requestedLimit = Math.min(
@@ -713,7 +719,7 @@ const browseSuggestions = async ({ limit = BROWSE_SUGGESTION_LIMIT, q, ...filter
     .lean();
   const searchableDocuments = documents.filter((document) => browseDocumentMatchesPrefix(document, query));
   const listingFilter = await buildBrowseListingFilter(filters);
-  const itemMap = await hydrateItems(searchableDocuments.map((document) => document.sourceId), listingFilter);
+  const itemMap = await hydrateItems(searchableDocuments.map((document) => document.sourceId), listingFilter, excludeOwnerId);
   const visibleDocuments = searchableDocuments
     .filter((document) => itemMap.has(String(document.sourceId)))
     .map((document) => ({ ...document, browseRank: browseSuggestionRank(document, query) }))
@@ -731,8 +737,8 @@ const browseSuggestions = async ({ limit = BROWSE_SUGGESTION_LIMIT, q, ...filter
   return { suggestions: [...termSuggestions, ...itemSuggestions] };
 };
 
-const unifiedSuggestions = async ({ q, limit = 10, scope, ...filters }) => {
-  if (scope === "items") return browseSuggestions({ q, limit, ...filters });
+const unifiedSuggestions = async ({ q, limit = 10, scope, ...filters }, { excludeOwnerId } = {}) => {
+  if (scope === "items") return browseSuggestions({ excludeOwnerId, q, limit, ...filters });
   const query = normalizeSearchText(q);
   if (query.length < 2) return { suggestions: [] };
   const tagPrefix = normalizeHashtag(query);
@@ -752,7 +758,7 @@ const unifiedSuggestions = async ({ q, limit = 10, scope, ...filters }) => {
     new Date(second.publishedAt) - new Date(first.publishedAt) ||
     String(first.sourceId).localeCompare(String(second.sourceId)));
   const diversified = diversifyRows(ranked).rows;
-  const hydrated = await hydrateSearchRows(diversified);
+  const hydrated = await hydrateSearchRows(diversified, { excludeOwnerId });
   const entitySuggestions = hydrated.map(entitySuggestion);
   const hashtagSuggestions = hashtagRows.map((row) => ({
     hashtag: `#${row._id}`,

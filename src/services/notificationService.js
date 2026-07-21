@@ -1,4 +1,5 @@
 const Notification = require("../models/Notification");
+const { chatUserRoom, notificationUserRoom } = require("../socket/rooms");
 
 const createNotification = async ({ userId, type, title, body, link, eventKey }) => {
   let notification;
@@ -21,8 +22,11 @@ const createNotification = async ({ userId, type, title, body, link, eventKey })
   const { getIO } = require("../config/socket");
   const io = typeof getIO === "function" ? getIO() : null;
   if (io) {
-    io.to(userId.toString()).emit("notification", notification);
-    io.to(userId.toString()).emit("new-notification", notification);
+    const room = notification.type === "chat"
+      ? chatUserRoom(userId)
+      : notificationUserRoom(userId);
+    io.to(room).emit("notification", notification);
+    io.to(room).emit("new-notification", notification);
   }
 
   return notification;

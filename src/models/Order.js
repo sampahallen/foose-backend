@@ -73,6 +73,7 @@ const orderSchema = new Schema(
       index: true,
     },
     paidAt: Date,
+    checkoutCancelledAt: Date,
     escrowStatus: {
       type: String,
       enum: ["not_held", "held", "released", "refunded"],

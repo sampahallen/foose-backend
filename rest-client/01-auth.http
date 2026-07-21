@@ -15,7 +15,7 @@ Content-Type: application/json
   "name": "Ama Mensah",
   "email": "ama.mensah@example.com",
   "username": "ama_mensah",
-  "password": "password123",
+  "password": "Password1!",
   "phone": "+233501234567",
   "location": {
     "region": "Greater Accra",
@@ -60,6 +60,10 @@ Content-Type: application/json
 
 ### Verify email
 GET {{baseUrl}}/auth/verify-email/{{emailVerifyToken}}
+
+### Resend email verification
+POST {{baseUrl}}/auth/resend-verification
+Authorization: Bearer {{accessToken}}
 
 ### Forgot password
 POST {{baseUrl}}/auth/forgot-password

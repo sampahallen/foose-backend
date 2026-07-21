@@ -42,6 +42,10 @@ const messageSchema = new Schema(
           enum: ["thumbs_up", "heart", "thumbs_down", "fire", "sad", "laugh"],
           required: true,
         },
+        isRead: {
+          type: Boolean,
+          default: false,
+        },
       },
     ],
     attachments: [

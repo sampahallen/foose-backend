@@ -2,6 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/orderController");
 const auth = require("../middleware/authMiddleware");
+const requireEmailVerified = require("../middleware/emailVerificationMiddleware");
 const { hasShop } = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
 
@@ -10,6 +11,7 @@ const router = express.Router();
 router.post(
   "/",
   auth,
+  requireEmailVerified,
   validate(
     z.object({
       body: z.object({
@@ -36,6 +38,15 @@ router.post(
         paymentMethod: z.enum(["paystack_mock", "paystack", "cash_on_pickup"]).optional(),
         mockPayment: z.boolean().optional(),
         callbackUrl: z.string().url().optional(),
+      }).superRefine((body, context) => {
+        const method = body.delivery?.method || "delivery";
+        if (method === "delivery" && !body.delivery?.address?.street?.trim()) {
+          context.addIssue({
+            code: "custom",
+            message: "Street address is required for standard delivery",
+            path: ["delivery", "address", "street"],
+          });
+        }
       }),
       params: z.object({}),
       query: z.object({}),

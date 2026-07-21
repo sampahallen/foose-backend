@@ -2,6 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/listingController");
 const auth = require("../middleware/authMiddleware");
+const requireEmailVerified = require("../middleware/emailVerificationMiddleware");
 const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const { hasShop } = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
@@ -11,7 +12,7 @@ const router = express.Router();
 
 const listingBody = z.object({
   title: z.string().min(2).optional(),
-  description: z.string().optional(),
+  description: z.string().max(500).optional(),
   hashtags: z.any().optional(),
   category: z.string().optional(),
   brand: z.string().optional(),
@@ -63,8 +64,27 @@ const myListingsQuerySchema = z.object({
   status: z.enum(["active", "sold", "draft"]).optional(),
 }).strict();
 
-router.get("/", controller.listListings);
+const availabilityQuerySchema = z.object({
+  ids: z.string().min(1).transform((value) => value.split(",").filter(Boolean)).refine(
+    (ids) => ids.length <= 50 && ids.every((id) => /^[a-f\d]{24}$/i.test(id)),
+    "Provide up to 50 valid listing IDs",
+  ),
+}).strict();
+
+router.get("/", optionalAuth, controller.listListings);
 router.get("/shop/:shopId", controller.getShopListings);
+router.get(
+  "/availability",
+  optionalAuth,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: z.object({}),
+      query: availabilityQuerySchema,
+    }),
+  ),
+  controller.getListingAvailability,
+);
 router.get(
   "/me",
   auth,
@@ -82,6 +102,7 @@ router.get("/:id", optionalAuth, controller.getListing);
 router.post(
   "/",
   auth,
+  requireEmailVerified,
   hasShop,
   ...listingImages,
   validate(
@@ -100,6 +121,7 @@ router.post(
 router.put(
   "/:id",
   auth,
+  requireEmailVerified,
   hasShop,
   ...listingImages,
   validate(
@@ -114,4 +136,6 @@ router.put(
 router.delete("/:id", auth, hasShop, controller.deleteListing);
 
 module.exports = router;
+module.exports.listingBody = listingBody;
 module.exports.myListingsQuerySchema = myListingsQuerySchema;
+module.exports.availabilityQuerySchema = availabilityQuerySchema;

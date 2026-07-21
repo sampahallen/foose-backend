@@ -23,7 +23,7 @@ API_PUBLIC_URL=http://localhost:8000
 
 `REDIS_URL`, AWS, Paystack, and SMTP settings are optional for local endpoint testing. When Redis is missing, cache and shared rate-limit features fall back gracefully.
 
-For deployment, set these public URLs so email verification links do not point to localhost:
+For deployment, set these public URLs so email verification links use the customer-facing frontend and OAuth callbacks use the public API:
 
 ```env
 CLIENT_URL=https://your-frontend-domain.com
@@ -32,6 +32,7 @@ API_PUBLIC_URL=https://your-api-domain.com
 ```
 
 If the frontend is deployed under a sub-path, set `CLIENT_BASE_PATH` or provide the full `CLIENT_AUTH_CALLBACK_URL`.
+New verification emails use `CLIENT_URL` plus `CLIENT_BASE_PATH`; `API_PUBLIC_URL` is not embedded in those emails.
 
 3. Start the API:
 
@@ -95,6 +96,10 @@ For upload requests, replace sample file paths such as `C:\Users\User\Pictures\i
 
 - All money values are integers in pesewas.
 - Protected routes need `Authorization: Bearer {{accessToken}}`.
+- Password registration requires a city and one of Ghana's 16 regions.
+- New password and OAuth registrations use the offline `disposable-email-domains` dataset plus the local overrides in `src/constants/disposableEmailDomains.js`; existing accounts are not retroactively blocked.
+- Unverified active accounts may log in, browse, and save favorites. Email verification is required for messaging, checkout/payment initialization, publishing listings, and opening a DigiShop.
+- Signed-in users can request a fresh link with `POST /api/auth/resend-verification`; the endpoint is limited to five requests per 15 minutes.
 - KYC and payment state are intentionally not cached.
 - DigiShop creation requires approved KYC.
 - User roles are stored in the embedded `roles` object. Use `src/constants/roles.js` for role keys, codes, and dot paths; for example, super admin is `roles.superAdmin = USER_ROLES.SUPER_ADMIN`.

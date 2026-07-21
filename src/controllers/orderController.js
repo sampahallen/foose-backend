@@ -9,7 +9,7 @@ const { invalidate } = require("../utils/cache");
 const { estimateDeliveryFee } = require("../services/deliveryService");
 const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
-const { initializeTransaction } = require("../services/paystackService");
+const { initializeTransaction, toInlinePayment } = require("../services/paystackService");
 const { awardPurchaseForOrder } = require("../services/recommendationService");
 const {
   runSearchSync,
@@ -132,6 +132,10 @@ exports.placeOrder = asyncHandler(async (req, res) => {
   const requestedPaymentMethod = req.body.paymentMethod || "paystack";
   const paymentMethod = requestedPaymentMethod === "paystack_mock" ? "paystack" : requestedPaymentMethod;
 
+  if (method === "delivery" && !req.body.delivery?.address?.street?.trim()) {
+    throw httpError(422, "Street address is required for standard delivery");
+  }
+
   if (method === "delivery" && paymentMethod === "cash_on_pickup") {
     throw httpError(400, "Cash on pickup is only available for pickup orders");
   }
@@ -144,6 +148,10 @@ exports.placeOrder = asyncHandler(async (req, res) => {
 
   if (listings.length !== requestedItems.length) {
     throw httpError(400, "One or more listings are unavailable");
+  }
+
+  if (listings.some((listing) => String(listing.shopId?.ownerId || "") === String(req.user.id))) {
+    throw httpError(403, "You cannot purchase your own listing");
   }
 
   const orderLines = requestedItems.map((item) => {
@@ -209,7 +217,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       escrowStatus: "not_held",
       sellerActionDeadline: paidOnline ? undefined : new Date(now.getTime() + SELLER_ACTION_WINDOW_MS),
       delivery: {
-        ...req.body.delivery,
+        ...(method === "delivery" ? req.body.delivery : {}),
         fee: allocatedDeliveryFee,
         method,
       },
@@ -293,15 +301,9 @@ exports.placeOrder = asyncHandler(async (req, res) => {
         {
           order: pendingOrders[0],
           orders: pendingOrders,
-          payment: {
-            accessCode: transaction.access_code,
-            authorizationUrl: transaction.authorization_url,
-            provider: "paystack",
-            reference: transaction.reference,
-            status: "pending",
-          },
+          payment: toInlinePayment(transaction),
         },
-        "Payment initialized. Redirect the buyer to Paystack.",
+        "Payment initialized. Open the secure Paystack payment window.",
         201,
       );
     } catch (error) {
@@ -358,7 +360,7 @@ exports.getOrdersByIds = asyncHandler(async (req, res, next) => {
 exports.getBuyingOrders = asyncHandler(async (req, res) => {
   await releaseDueEscrows();
 
-  const orders = await Order.find({ buyerId: req.user.id })
+  const orders = await Order.find({ buyerId: req.user.id, checkoutCancelledAt: { $exists: false } })
     .populate("shopId", "shopName slug")
     .populate("items.listingId", "title images price currency type")
     .sort({ createdAt: -1 });
@@ -372,7 +374,7 @@ exports.getSellingOrders = asyncHandler(async (req, res) => {
   const shop = await DigiShop.findOne({ ownerId: req.user.id });
   if (!shop) return success(res, { orders: [] }, "Selling orders loaded");
 
-  const orders = await Order.find({ shopId: shop._id })
+  const orders = await Order.find({ shopId: shop._id, checkoutCancelledAt: { $exists: false } })
     .populate("buyerId", "name username email phone isKycVerified")
     .populate("items.listingId", "title images price currency type")
     .sort({ createdAt: -1 });

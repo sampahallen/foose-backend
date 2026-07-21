@@ -30,6 +30,7 @@ const listingSchema = new Schema(
     description: {
       type: String,
       trim: true,
+      maxlength: 500,
       default: "",
     },
     hashtags: {

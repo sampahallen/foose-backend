@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const httpError = require("../utils/httpError");
+const { isDisposableEmail } = require("../utils/email");
 
 const stateSecret = () =>
   process.env.OAUTH_STATE_SECRET ||
@@ -90,26 +91,52 @@ const linkProvider = (user, provider, providerId, email) => {
   }
 };
 
-const findOrCreateOAuthUser = async ({ provider, providerId, email, name, profilePhoto }) => {
+const findOrCreateOAuthUser = async ({
+  provider,
+  providerId,
+  email,
+  emailVerified,
+  name,
+  profilePhoto,
+}) => {
   const normalizedEmail = email?.trim().toLowerCase();
-  let user = await User.findOne({
+  const providerConfirmedEmail = emailVerified === true || emailVerified === "true";
+  const providerLinkedUser = await User.findOne({
     authProviders: { $elemMatch: { provider, providerId } },
   }).select("+authProviders +refreshTokens");
 
-  if (!user && normalizedEmail) {
-    user = await User.findOne({ email: normalizedEmail }).select("+authProviders +refreshTokens");
-  }
-
-  if (user) {
-    linkProvider(user, provider, providerId, normalizedEmail);
-    if (!user.profilePhoto && profilePhoto) user.profilePhoto = profilePhoto;
-    if (normalizedEmail) user.isEmailVerified = true;
-    await user.save();
-    return user;
+  // A previously linked provider ID remains authoritative for legacy accounts,
+  // but an unconfirmed claim must never upgrade email-verification state.
+  if (providerLinkedUser) {
+    linkProvider(providerLinkedUser, provider, providerId, normalizedEmail);
+    if (!providerLinkedUser.profilePhoto && profilePhoto) providerLinkedUser.profilePhoto = profilePhoto;
+    if (normalizedEmail && providerConfirmedEmail) providerLinkedUser.isEmailVerified = true;
+    await providerLinkedUser.save();
+    return providerLinkedUser;
   }
 
   if (!normalizedEmail) {
     throw httpError(400, "This provider did not return an email address. Try another sign-in method.");
+  }
+
+  // Matching an existing local account by email links a new login method, so the
+  // provider must first prove that it verified ownership of that address.
+  if (!providerConfirmedEmail) {
+    throw httpError(400, "This provider did not confirm the email address");
+  }
+
+  const emailMatchedUser = await User.findOne({ email: normalizedEmail })
+    .select("+authProviders +refreshTokens");
+  if (emailMatchedUser) {
+    linkProvider(emailMatchedUser, provider, providerId, normalizedEmail);
+    if (!emailMatchedUser.profilePhoto && profilePhoto) emailMatchedUser.profilePhoto = profilePhoto;
+    emailMatchedUser.isEmailVerified = true;
+    await emailMatchedUser.save();
+    return emailMatchedUser;
+  }
+
+  if (isDisposableEmail(normalizedEmail)) {
+    throw httpError(400, "Disposable or temporary email addresses are not allowed");
   }
 
   const passwordHash = await bcrypt.hash(`${provider}:${providerId}:${Date.now()}`, 12);
@@ -159,6 +186,7 @@ const getGoogleProfile = async (code) => {
 
   return {
     email: profileResponse.data.email,
+    emailVerified: profileResponse.data.email_verified,
     name: profileResponse.data.name,
     profilePhoto: profileResponse.data.picture,
     provider: "google",
@@ -220,6 +248,7 @@ const getAppleProfile = async (code, userPayload) => {
 
   return {
     email: decoded.email,
+    emailVerified: decoded.email_verified,
     name: fullName || decoded.email?.split("@")[0],
     provider: "apple",
     providerId: decoded.sub,

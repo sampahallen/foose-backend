@@ -1,5 +1,6 @@
 const Message = require("../models/Message");
 const { makeConversationId } = require("../controllers/chatController");
+const { chatUserRoom } = require("./rooms");
 
 const parseConversationParticipants = (conversationId = "") => {
   const [firstId, secondId, suffix] = String(conversationId).split("_");
@@ -109,8 +110,8 @@ const registerChatSocket = (io, socket) => {
         message,
       };
 
-      io.to(receiverId.toString()).emit("new-message", event);
-      io.to(socket.user.id).emit("message-confirmed", event);
+      io.to(chatUserRoom(receiverId)).emit("new-message", event);
+      io.to(chatUserRoom(socket.user.id)).emit("message-confirmed", event);
 
       if (callback) callback({ success: true, ...event });
     } catch (error) {
@@ -148,8 +149,8 @@ const registerChatSocket = (io, socket) => {
       : participants.filter((participantId) => participantId !== socket.user.id);
 
     targets.forEach((targetId) => {
-      io.to(targetId.toString()).emit("messages_read", event);
-      io.to(targetId.toString()).emit("messages-read", event);
+      io.to(chatUserRoom(targetId)).emit("messages_read", event);
+      io.to(chatUserRoom(targetId)).emit("messages-read", event);
     });
   };
 

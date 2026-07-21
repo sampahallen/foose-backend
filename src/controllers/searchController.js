@@ -20,6 +20,12 @@ const TOP_PICK_TAG = "top-pick";
 const normalizeSearchText = (value) => String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 const SHOP_LISTING_FIELDS = "shopName slug rating totalReviews ownerId location";
 
+const ownShopIdFor = async (userId) => {
+  if (!userId) return null;
+  const shop = await DigiShop.findOne({ ownerId: userId }).select("_id").lean();
+  return shop?._id || null;
+};
+
 const listingLocationOptions = async (filter) => {
   const legacyFilter = { ...filter };
   if (filter.$and) legacyFilter.$and = [...filter.$and];
@@ -168,15 +174,19 @@ const listingSearchData = async (query, baseFilter = {}) => {
 };
 
 exports.searchListings = asyncHandler(async (req, res) => {
-  const cacheKey = `search:${queryHash(req.query)}`;
-  const data = await withCache(cacheKey, 60, () => listingSearchData(req.query));
+  const ownShopId = await ownShopIdFor(req.user?.id);
+  const cacheKey = `search:${queryHash(req.query)}:${ownShopId || "public"}`;
+  const data = await withCache(cacheKey, 60, () => listingSearchData(
+    req.query,
+    ownShopId ? { shopId: { $ne: ownShopId } } : {},
+  ));
 
   return success(res, data);
 });
 
 exports.searchUnified = asyncHandler(async (req, res) => {
   const { cursor, limit = 50, q, scope = "all", tag, track } = req.validated?.query || req.query;
-  const data = await unifiedSearch({ cursor, limit, q, scope, tag });
+  const data = await unifiedSearch({ cursor, excludeOwnerId: req.user?.id, limit, q, scope, tag });
 
   if (shouldLogUnifiedSearch({ cursor, scope, track })) {
     logSearchTerm(tag ? `#${data.query}` : q);
@@ -187,15 +197,20 @@ exports.searchUnified = asyncHandler(async (req, res) => {
 
 exports.getUnifiedSuggestions = asyncHandler(async (req, res) => {
   const query = req.validated?.query || req.query;
-  const data = await unifiedSuggestions(query);
+  const data = await unifiedSuggestions(query, { excludeOwnerId: req.user?.id });
   return success(res, data, "Search suggestions loaded");
 });
 
 exports.getTopPicks = asyncHandler(async (req, res) => {
-  const cacheKey = `search:top-picks:${queryHash(req.query)}`;
+  const ownShopId = await ownShopIdFor(req.user?.id);
+  const cacheKey = `search:top-picks:${queryHash(req.query)}:${ownShopId || "public"}`;
   const now = new Date();
   const data = await withCache(cacheKey, 120, () =>
-    listingSearchData(req.query, { promotionTags: TOP_PICK_TAG, promotionExpiresAt: { $gte: now } }),
+    listingSearchData(req.query, {
+      promotionTags: TOP_PICK_TAG,
+      promotionExpiresAt: { $gte: now },
+      ...(ownShopId ? { shopId: { $ne: ownShopId } } : {}),
+    }),
   );
 
   return success(res, data, "Top picks loaded");
@@ -210,7 +225,11 @@ exports.getFeatured = asyncHandler(async (req, res) => {
       .lean(),
   );
 
-  return success(res, { listings }, "Featured listings loaded");
+  const visibleListings = req.user?.id
+    ? listings.filter((listing) => String(listing.shopId?.ownerId || "") !== String(req.user.id))
+    : listings;
+
+  return success(res, { listings: visibleListings }, "Featured listings loaded");
 });
 
 exports.getPopularSearches = asyncHandler(async (req, res) => {

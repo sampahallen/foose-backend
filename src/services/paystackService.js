@@ -37,6 +37,13 @@ const verifyTransaction = async (reference) => {
   return response.data.data;
 };
 
+const toInlinePayment = (transaction) => ({
+  accessCode: transaction.access_code,
+  provider: "paystack",
+  reference: transaction.reference,
+  status: "pending",
+});
+
 const initiateTransfer = async ({ amount, recipient, reason }) => {
   if (!hasPaystackKey()) {
     return {
@@ -71,6 +78,7 @@ const verifyWebhookSignature = (rawBody, signature) => {
 
 module.exports = {
   initializeTransaction,
+  toInlinePayment,
   verifyTransaction,
   initiateTransfer,
   verifyWebhookSignature,

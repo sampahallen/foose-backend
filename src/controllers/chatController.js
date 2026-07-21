@@ -4,6 +4,7 @@ const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const { success } = require("../utils/apiResponse");
 const httpError = require("../utils/httpError");
+const { chatUserRoom } = require("../socket/rooms");
 
 const makeConversationId = ({ userA, userB }) => {
   return `${[userA.toString(), userB.toString()].sort().join("_")}_general`;
@@ -73,7 +74,10 @@ function emitChatEvent(room, event, payload) {
   try {
     const { getIO } = require("../config/socket");
     const io = typeof getIO === "function" ? getIO() : null;
-    if (io) io.to(room.toString()).emit(event, payload);
+    const rooms = Array.isArray(room)
+      ? room.map((value) => value?.toString()).filter(Boolean)
+      : room?.toString();
+    if (io && (Array.isArray(rooms) ? rooms.length : rooms)) io.to(rooms).emit(event, payload);
   } catch {
     // Realtime delivery is best-effort; REST still returns the saved message.
   }
@@ -126,6 +130,22 @@ exports.listConversations = asyncHandler(async (req, res) => {
             ],
           },
         },
+        unreadReactionCount: {
+          $sum: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ["$reactions", []] },
+                as: "reaction",
+                cond: {
+                  $and: [
+                    { $ne: ["$$reaction.userId", userObjectId] },
+                    { $eq: ["$$reaction.isRead", false] },
+                  ],
+                },
+              },
+            },
+          },
+        },
       },
     },
     { $sort: { "latestMessage.createdAt": -1 } },
@@ -148,6 +168,7 @@ exports.listConversations = asyncHandler(async (req, res) => {
       conversationId: makeConversationId({ userA: req.user.id, userB: row._id }),
       latestMessage,
       unreadCount: row.unreadCount,
+      unreadReactionCount: row.unreadReactionCount,
       participant,
       listing: latestMessage.listingId,
     };
@@ -251,8 +272,8 @@ exports.sendMessage = asyncHandler(async (req, res) => {
   await message.populate(messagePopulate(listingId ? "name username profilePhoto phone" : "name username profilePhoto"));
 
   const realtimePayload = { conversationId, message };
-  emitChatEvent(receiverId, "new-message", realtimePayload);
-  emitChatEvent(req.user.id, "message-confirmed", realtimePayload);
+  emitChatEvent(chatUserRoom(receiverId), "new-message", realtimePayload);
+  emitChatEvent(chatUserRoom(req.user.id), "message-confirmed", realtimePayload);
 
   return success(res, { conversationId, message }, "Message sent", 201);
 });
@@ -267,20 +288,43 @@ exports.markRead = asyncHandler(async (req, res) => {
   );
 
   const participants = parseConversationParticipants(req.params.conversationId) || [];
-  emitChatEvent(req.user.id, "messages_read", {
+  emitChatEvent(chatUserRoom(req.user.id), "messages_read", {
     conversationId: req.params.conversationId,
     readBy: req.user.id,
   });
   participants
     .filter((participantId) => participantId !== req.user.id)
     .forEach((participantId) => {
-      emitChatEvent(participantId, "messages_read", {
+      emitChatEvent(chatUserRoom(participantId), "messages_read", {
         conversationId: req.params.conversationId,
         readBy: req.user.id,
       });
     });
 
   return success(res, {}, "Messages marked as read");
+});
+
+exports.markReactionsRead = asyncHandler(async (req, res) => {
+  const userObjectId = new mongoose.Types.ObjectId(req.user.id);
+  await Message.updateMany(
+    participantFilter(req.params.conversationId, req.user.id),
+    { $set: { "reactions.$[reaction].isRead": true } },
+    {
+      arrayFilters: [
+        {
+          "reaction.userId": { $ne: userObjectId },
+          "reaction.isRead": false,
+        },
+      ],
+    },
+  );
+
+  emitChatEvent(chatUserRoom(req.user.id), "message-reactions-read", {
+    conversationId: req.params.conversationId,
+    readBy: req.user.id,
+  });
+
+  return success(res, {}, "Reactions marked as read");
 });
 
 exports.reactToMessage = asyncHandler(async (req, res) => {
@@ -294,17 +338,40 @@ exports.reactToMessage = asyncHandler(async (req, res) => {
   });
   if (!message) throw httpError(404, "Message not found");
 
-  const existing = message.reactions.find((item) => item.userId.toString() === req.user.id);
-  if (existing) {
+  const existingIndex = message.reactions.findIndex((item) => item.userId.toString() === req.user.id);
+  const existing = existingIndex >= 0 ? message.reactions[existingIndex] : null;
+  let removed = false;
+  let unreadReactionDelta = 0;
+  if (existing?.reaction === reaction) {
+    unreadReactionDelta = existing.isRead === false ? -1 : 0;
+    message.reactions.splice(existingIndex, 1);
+    removed = true;
+  } else if (existing) {
+    unreadReactionDelta = existing.isRead === false ? 0 : 1;
     existing.reaction = reaction;
+    existing.isRead = false;
   } else {
-    message.reactions.push({ userId: req.user.id, reaction });
+    message.reactions.push({ userId: req.user.id, reaction, isRead: false });
+    unreadReactionDelta = 1;
   }
 
   await message.save();
   await message.populate(messagePopulate());
 
-  return success(res, { message }, "Reaction saved");
+  const realtimePayload = {
+    conversationId: message.conversationId,
+    message,
+    reactedBy: req.user.id,
+    removed,
+    unreadReactionDelta,
+  };
+  const reactionRooms = [message.senderId, message.receiverId]
+    .map(chatUserRoom)
+    .filter(Boolean);
+  reactionRooms.push(message.conversationId);
+  emitChatEvent(reactionRooms, "message-reaction-updated", realtimePayload);
+
+  return success(res, { message, removed }, removed ? "Reaction removed" : "Reaction saved");
 });
 
 exports.makeConversationId = makeConversationId;

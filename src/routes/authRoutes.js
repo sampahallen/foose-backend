@@ -3,7 +3,9 @@ const { z } = require("zod");
 const controller = require("../controllers/authController");
 const auth = require("../middleware/authMiddleware");
 const validate = require("../middleware/validateMiddleware");
-const { authLimiter } = require("../middleware/rateLimitMiddleware");
+const { authLimiter, verificationEmailLimiter } = require("../middleware/rateLimitMiddleware");
+const { GHANA_REGIONS } = require("../constants/ghanaRegions");
+const { isDisposableEmail } = require("../utils/email");
 
 const router = express.Router();
 
@@ -14,6 +16,26 @@ const strongPassword = z
   .regex(/[A-Z]/, "Password must include a capital letter")
   .regex(/\d/, "Password must include a number")
   .regex(/[^A-Za-z0-9]/, "Password must include a symbol");
+const registrationEmail = z
+  .string()
+  .trim()
+  .email()
+  .transform((email) => email.toLowerCase())
+  .refine((email) => !isDisposableEmail(email), {
+    message: "Disposable or temporary email addresses are not allowed",
+  });
+
+const registerBodySchema = z.object({
+  name: z.string().min(2),
+  email: registrationEmail,
+  username: z.string().regex(/^[a-zA-Z0-9_.]{3,20}$/),
+  password: strongPassword,
+  phone: z.string().optional(),
+  location: z.object({
+    region: z.enum(GHANA_REGIONS),
+    city: z.string().trim().min(2),
+  }),
+});
 
 router.get("/oauth/google", authLimiter, controller.startGoogleOAuth);
 router.get("/oauth/apple", authLimiter, controller.startAppleOAuth);
@@ -26,19 +48,7 @@ router.post(
   authLimiter,
   validate(
     z.object({
-      body: z.object({
-        name: z.string().min(2),
-        email: z.string().email(),
-        username: z.string().regex(/^[a-zA-Z0-9_.]{3,20}$/),
-        password: strongPassword,
-        phone: z.string().optional(),
-        location: z
-          .object({
-            region: z.string().optional(),
-            city: z.string().optional(),
-          })
-          .optional(),
-      }),
+      body: registerBodySchema,
       params: z.object({}),
       query: z.object({}),
     }),
@@ -93,7 +103,15 @@ router.post(
   controller.logout,
 );
 
+router.post("/verify-email", authLimiter, controller.verifyEmailFromClient);
+// Temporary compatibility for verification emails issued before the frontend flow was deployed.
 router.get("/verify-email/:token", authLimiter, controller.verifyEmail);
+router.post(
+  "/resend-verification",
+  auth,
+  verificationEmailLimiter,
+  controller.resendVerificationEmail,
+);
 
 router.post(
   "/forgot-password",
@@ -122,3 +140,4 @@ router.post(
 );
 
 module.exports = router;
+module.exports.registerBodySchema = registerBodySchema;

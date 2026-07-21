@@ -52,8 +52,21 @@ const kycLimiter = createLimiter({
   },
 });
 
+const verificationEmailLimiter = createLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many verification email requests. Please try again later.",
+  },
+});
+
 module.exports = {
   authLimiter,
   generalLimiter,
   kycLimiter,
+  verificationEmailLimiter,
 };

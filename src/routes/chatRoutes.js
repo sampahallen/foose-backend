@@ -2,15 +2,17 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/chatController");
 const auth = require("../middleware/authMiddleware");
+const requireEmailVerified = require("../middleware/emailVerificationMiddleware");
 const { chatAttachments } = require("../middleware/uploadMiddleware");
 const validate = require("../middleware/validateMiddleware");
 
 const router = express.Router();
 
-router.get("/", auth, controller.listConversations);
+router.get("/", auth, requireEmailVerified, controller.listConversations);
 router.put(
   "/messages/:messageId/reaction",
   auth,
+  requireEmailVerified,
   validate(
     z.object({
       body: z.object({
@@ -27,6 +29,7 @@ router.put(
 router.post(
   "/",
   auth,
+  requireEmailVerified,
   ...chatAttachments,
   validate(
     z.object({
@@ -47,7 +50,8 @@ router.post(
   ),
   controller.sendMessage,
 );
-router.put("/:conversationId/read", auth, controller.markRead);
-router.get("/:conversationId", auth, controller.listConversation);
+router.put("/:conversationId/read", auth, requireEmailVerified, controller.markRead);
+router.put("/:conversationId/reactions/read", auth, requireEmailVerified, controller.markReactionsRead);
+router.get("/:conversationId", auth, requireEmailVerified, controller.listConversation);
 
 module.exports = router;

@@ -9,6 +9,7 @@ const { success } = require("../utils/apiResponse");
 const { invalidate, invalidatePattern } = require("../utils/cache");
 const {
   initializeTransaction,
+  toInlinePayment,
   verifyTransaction,
   initiateTransfer,
   verifyWebhookSignature,
@@ -16,6 +17,7 @@ const {
 const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
 const { awardPurchaseForOrder } = require("../services/recommendationService");
+const { runSearchSync, syncListingSearchDocument } = require("../services/searchIndexService");
 
 const orderPopulate = [
   { path: "shopId", select: "ownerId shopName slug" },
@@ -99,16 +101,25 @@ const loadPromotionTarget = async ({ targetId, targetIds, targetType, userId, it
 };
 
 const markOrderPaid = async (order, reference, paymentMethod, buyer) => {
-  if (order.paymentStatus === "paid") return order;
+  if (order.paymentStatus === "paid" || order.status === "cancelled") return order;
 
-  order.status = "paid";
-  order.paymentRef = reference;
-  order.paymentMethod = paymentMethod === "cash_on_pickup" ? "cash_on_pickup" : "paystack";
-  order.paymentStatus = "paid";
-  order.paidAt = new Date();
-  order.escrowStatus = "held";
-  order.sellerActionDeadline = new Date(Date.now() + 48 * 60 * 60 * 1000);
-  await order.save();
+  const paidOrder = await Order.findOneAndUpdate(
+    { _id: order._id, paymentStatus: "unpaid", status: "pending" },
+    {
+      $set: {
+        escrowStatus: "held",
+        paidAt: new Date(),
+        paymentMethod: paymentMethod === "cash_on_pickup" ? "cash_on_pickup" : "paystack",
+        paymentRef: reference,
+        paymentStatus: "paid",
+        sellerActionDeadline: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        status: "paid",
+      },
+    },
+    { new: true },
+  );
+  if (!paidOrder) return Order.findById(order._id);
+  order = paidOrder;
 
   const recommendationOrder = await Order.findOneAndUpdate(
     { _id: order._id, recommendationAwardedAt: { $exists: false } },
@@ -152,6 +163,77 @@ const markOrderPaid = async (order, reference, paymentMethod, buyer) => {
   return order;
 };
 
+exports.cancelPayment = asyncHandler(async (req, res) => {
+  const reference = req.params.reference;
+  const orders = await Order.find({
+    buyerId: req.user.id,
+    paymentRef: reference,
+  });
+
+  if (!orders.length) throw httpError(404, "Pending payment not found");
+
+  const transaction = await verifyTransaction(reference);
+  if (transaction.status === "success") {
+    const buyer = await User.findById(req.user.id);
+    const paidOrders = await Promise.all(
+      orders.map((order) => markOrderPaid(order, reference, transaction.channel || "paystack", buyer)),
+    );
+    if (paidOrders.some((order) => order?.paymentStatus !== "paid")) {
+      throw httpError(409, "Payment completed after cancellation; contact support with the payment reference");
+    }
+    return success(res, { cancelled: false, paid: true, releasedItemCount: 0, orders: paidOrders }, "Payment was already completed");
+  }
+
+  const cancelledOrders = (await Promise.all(
+    orders.map((order) => Order.findOneAndUpdate(
+      { _id: order._id, buyerId: req.user.id, paymentRef: reference, paymentStatus: "unpaid", status: "pending" },
+      { $set: { checkoutCancelledAt: new Date(), escrowStatus: "not_held", status: "cancelled" } },
+      { new: true },
+    )),
+  )).filter(Boolean);
+
+  const releasedQuantities = new Map();
+  cancelledOrders.forEach((order) => {
+    order.items.forEach((item) => {
+      if (!item.listingId) return;
+      const listingId = String(item.listingId);
+      releasedQuantities.set(listingId, (releasedQuantities.get(listingId) || 0) + Math.max(Number(item.quantity || 1), 1));
+    });
+  });
+
+  await Promise.all(Array.from(releasedQuantities.entries()).map(async ([listingId, quantity]) => {
+    await Listing.updateOne(
+      { _id: listingId, status: { $ne: "removed" } },
+      { $inc: { quantity }, $set: { status: "active" } },
+    );
+    await runSearchSync(`listing:${listingId}:payment-cancelled`, () => syncListingSearchDocument(listingId));
+  }));
+
+  await invalidate(
+    "listings:featured",
+    ...cancelledOrders.map((order) => `shop:${order.shopId}:listings`),
+  );
+
+  const currentOrders = cancelledOrders.length
+    ? orders
+    : await Order.find({ buyerId: req.user.id, paymentRef: reference });
+  const alreadyCancelled = !cancelledOrders.length && currentOrders.every((order) => order.status === "cancelled");
+  if (!cancelledOrders.length && !alreadyCancelled) {
+    throw httpError(409, "Payment can no longer be cancelled");
+  }
+
+  return success(
+    res,
+    {
+      cancelled: true,
+      orderIds: orders.map((order) => order._id),
+      paid: false,
+      releasedItemCount: Array.from(releasedQuantities.values()).reduce((sum, quantity) => sum + quantity, 0),
+    },
+    alreadyCancelled ? "Payment was already cancelled" : "Payment cancelled and inventory released",
+  );
+});
+
 exports.initializePayment = asyncHandler(async (req, res) => {
   const order = await Order.findOne({
     _id: req.body.orderId,
@@ -171,7 +253,7 @@ exports.initializePayment = asyncHandler(async (req, res) => {
   order.paymentRef = transaction.reference;
   await order.save();
 
-  return success(res, { transaction }, "Payment initialized");
+  return success(res, { payment: toInlinePayment(transaction) }, "Payment initialized");
 });
 
 exports.verifyPayment = asyncHandler(async (req, res) => {
@@ -237,10 +319,9 @@ exports.initializePromotionPayment = asyncHandler(async (req, res) => {
     res,
     {
       payment: {
+        ...toInlinePayment(transaction),
         amount: config.amount,
         amountGhs: config.amountGhs,
-        authorizationUrl: transaction.authorization_url,
-        reference: transaction.reference,
         targetId,
         targetIds: targetType === "listing" ? targetIds : undefined,
         targetType,

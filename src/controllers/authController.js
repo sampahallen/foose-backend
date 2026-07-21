@@ -22,11 +22,15 @@ const {
   getGoogleProfile,
   googleAuthorizationUrl,
   clientUrl,
-  publicApiUrl,
   readState,
 } = require("../services/oauthService");
+const {
+  EMAIL_VERIFY_TOKEN_PATTERN,
+  consumeEmailVerificationToken,
+  emailVerificationLink,
+  issueEmailVerificationToken,
+} = require("../services/emailVerificationService");
 
-const EMAIL_VERIFY_TOKEN_TTL_MS = 15 * 60 * 1000;
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 const userFields = "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -authProviders";
@@ -48,12 +52,6 @@ const sendAuth = async (res, user, message, statusCode = 200) => {
   const safeUser = await User.findById(user._id).select(userFields);
   return success(res, { user: safeUser, tokens }, message, statusCode);
 };
-
-const makeToken = () => crypto.randomBytes(32).toString("hex");
-
-const hashToken = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
-
-const verificationLink = (token) => `${publicApiUrl()}/api/auth/verify-email/${encodeURIComponent(token)}`;
 
 const passwordResetSigningSecret = () =>
   process.env.PASSWORD_RESET_SECRET ||
@@ -107,23 +105,38 @@ const loginUrlWithParams = (params) => `${clientPathUrl("/")}#/login?${params.to
 const wantsBrowserRedirect = (req) => req.accepts(["html", "json"]) === "html";
 
 const sendVerificationEmail = async (user) => {
-  const emailVerifyToken = makeToken();
-  user.emailVerifyExpires = new Date(Date.now() + EMAIL_VERIFY_TOKEN_TTL_MS);
-  user.emailVerifyToken = hashToken(emailVerifyToken);
-  await user.save();
-
-  const link = verificationLink(emailVerifyToken);
+  const emailVerifyToken = await issueEmailVerificationToken(user);
+  const link = emailVerificationLink(emailVerifyToken);
 
   return sendEmail({
     to: user.email,
     subject: "Verify your Foose account",
-    text: `Click this secure link to verify your Foose account and sign in. It expires in 15 minutes: ${link}`,
+    text: `Click this secure link to verify your Foose email. Email verification is required for messaging, checkout, listing items, and opening a DigiShop. The link expires in 15 minutes: ${link}`,
     html: `
-      <p>Click the secure link below to verify your Foose account and sign in.</p>
-      <p><a href="${link}">Verify and sign in</a></p>
+      <p>Click the secure link below to verify your Foose email.</p>
+      <p><a href="${link}">Verify email</a></p>
+      <p>Email verification is required for messaging, checkout, listing items, and opening a DigiShop.</p>
       <p>This link expires in 15 minutes and can only be used once.</p>
     `,
   });
+};
+
+const needsFreshEmailVerification = (user, now = Date.now()) => {
+  if (user?.isEmailVerified) return false;
+  const expiresAt = new Date(user?.emailVerifyExpires || 0).getTime();
+  return !user?.emailVerifyToken || !Number.isFinite(expiresAt) || expiresAt <= now;
+};
+
+const refreshExpiredVerificationEmail = async (user) => {
+  if (!needsFreshEmailVerification(user)) return;
+
+  try {
+    await sendVerificationEmail(user);
+  } catch (error) {
+    // Delivery problems must not turn valid credentials into a failed login.
+    // The signed-in user can retry through the rate-limited resend endpoint.
+    console.warn(`Verification email refresh failed: ${error.message}`);
+  }
 };
 
 const sendAuthRedirect = async (res, user, redirectTarget = "/login") => {
@@ -225,8 +238,7 @@ exports.login = asyncHandler(async (req, res) => {
   }
 
   if (!user.isEmailVerified) {
-    await sendVerificationEmail(user);
-    throw httpError(403, "Email verification required. We sent a fresh sign-in link to your inbox.");
+    await refreshExpiredVerificationEmail(user);
   }
 
   return sendAuth(res, user, "Login successful");
@@ -297,17 +309,7 @@ exports.logout = asyncHandler(async (req, res) => {
 });
 
 exports.verifyEmail = asyncHandler(async (req, res) => {
-  const user = await User.findOneAndUpdate(
-    {
-      emailVerifyExpires: { $gt: new Date() },
-      emailVerifyToken: hashToken(req.params.token),
-    },
-    {
-      $set: { accountStatus: "active", isEmailVerified: true },
-      $unset: { deactivatedAt: "", emailVerifyExpires: "", emailVerifyToken: "", scheduledDeletionAt: "" },
-    },
-    { new: true },
-  ).select("+refreshTokens");
+  const user = await consumeEmailVerificationToken(req.params.token);
 
   if (!user) {
     if (wantsBrowserRedirect(req)) {
@@ -340,18 +342,49 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
   return success(res, { user: safeUser, tokens }, "Email verified");
 });
 
+exports.verifyEmailFromClient = asyncHandler(async (req, res) => {
+  const token = String(req.body?.token || "").trim().toLowerCase();
+  if (!EMAIL_VERIFY_TOKEN_PATTERN.test(token)) {
+    throw httpError(400, "Invalid email verification token");
+  }
+
+  const user = await consumeEmailVerificationToken(token);
+  if (!user) {
+    throw httpError(400, "Invalid or expired email verification token");
+  }
+
+  await runSearchSync(`user:${user._id}:activate`, () =>
+    rebuildUserSearchDocuments(user._id));
+
+  return success(res, { email: user.email }, "Email verified");
+});
+
+exports.resendVerificationEmail = asyncHandler(async (req, res) => {
+  if (req.user.isEmailVerified) {
+    return success(res, {}, "If verification is needed, a link has been sent");
+  }
+
+  const user = await User.findById(req.user.id);
+  if (!user) throw httpError(401, "User account is not active");
+
+  await sendVerificationEmail(user);
+  return success(res, {}, "If verification is needed, a link has been sent");
+});
+
 exports.forgotPassword = asyncHandler(async (req, res) => {
   const user = await User.findOne({
     accountStatus: { $ne: "deleted" },
     email: req.body.email.toLowerCase(),
   }).select("+passwordHash");
 
-  if (user) {
-    const resetToken = makePasswordResetToken(user);
-    await sendPasswordResetEmail(user, passwordResetLink(resetToken));
+  if (!user) {
+    throw httpError(404, "No Foose account was found with that email address");
   }
 
-  return success(res, {}, "If the email exists, a reset link has been sent");
+  const resetToken = makePasswordResetToken(user);
+  await sendPasswordResetEmail(user, passwordResetLink(resetToken));
+
+  return success(res, {}, "Password reset link sent");
 });
 
 exports.resetPassword = asyncHandler(async (req, res) => {
@@ -369,3 +402,5 @@ exports.resetPassword = asyncHandler(async (req, res) => {
 
   return success(res, {}, "Password reset successful");
 });
+
+exports.needsFreshEmailVerification = needsFreshEmailVerification;

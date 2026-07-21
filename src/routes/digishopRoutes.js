@@ -2,6 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/digishopController");
 const auth = require("../middleware/authMiddleware");
+const requireEmailVerified = require("../middleware/emailVerificationMiddleware");
 const { hasShop, isKycVerified } = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
 const { shopImages } = require("../middleware/uploadMiddleware");
@@ -27,6 +28,7 @@ const shopBody = z.object({
 router.post(
   "/",
   auth,
+  requireEmailVerified,
   isKycVerified,
   ...shopImages,
   validate(

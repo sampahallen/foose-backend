@@ -4,7 +4,6 @@ const Event = require("../models/Event");
 const GalleryPost = require("../models/GalleryPost");
 const Listing = require("../models/Listing");
 const { createNotification } = require("../services/notificationService");
-const Order = require("../models/Order");
 const User = require("../models/User");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
@@ -89,51 +88,36 @@ exports.updateMe = asyncHandler(async (req, res) => {
 });
 
 const profileForUser = async (user, options = {}) => {
-  const includeOrders = typeof options === "boolean" ? options : Boolean(options.includeOrders);
-  const viewerId = typeof options === "object" ? options.viewerId : null;
+  const viewerId = options.viewerId || null;
   const shop = await DigiShop.findOne({ ownerId: user._id }).lean();
-  const [listings, events, gallery, followerCount, followingRecord, activeOrders] = await Promise.all([
+  const [finspoCount, listingCount, eventCount, followerCount, followingCount, followingRecord] = await Promise.all([
+    GalleryPost.countDocuments({ isArchived: { $ne: true }, userId: user._id }),
     shop
-      ? Listing.find({ shopId: shop._id, status: { $ne: "removed" } })
-          .populate("shopId", "shopName slug rating totalReviews")
-          .sort({ createdAt: -1 })
-          .limit(12)
-          .lean()
-      : [],
-    Event.find({ organizerId: user._id }).sort({ date: -1 }).limit(12).lean(),
-    GalleryPost.find({ isArchived: { $ne: true }, userId: user._id })
-      .sort({ createdAt: -1 })
-      .limit(12)
-      .lean(),
-    User.countDocuments({ following: user._id }),
+      ? Listing.countDocuments({ shopId: shop._id, status: "active", visibility: { $ne: "event" } })
+      : 0,
+    Event.countDocuments({ organizerId: user._id }),
+    User.countDocuments({ ...activeAccountFilter, following: user._id }),
+    User.countDocuments({ ...activeAccountFilter, _id: { $in: user.following || [] } }),
     viewerId ? User.exists({ _id: viewerId, following: user._id }) : null,
-    includeOrders
-      ? Order.find({
-          $or: [{ buyerId: user._id }, ...(shop ? [{ shopId: shop._id }] : [])],
-          status: { $in: ["pending", "paid", "processing", "shipped", "disputed"] },
-        })
-          .sort({ createdAt: -1 })
-          .limit(8)
-          .lean()
-      : [],
   ]);
 
   return {
     user,
-    activeOrders,
-    events,
+    contentCounts: {
+      events: eventCount,
+      finspo: finspoCount,
+      listings: listingCount,
+    },
     followerCount,
-    followingCount: user.following?.length || 0,
-    gallery,
+    followingCount,
     isFollowing: Boolean(followingRecord),
-    listings,
     shop,
   };
 };
 
 exports.getMyProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select(privateFields).lean();
-  return success(res, await profileForUser(user, { includeOrders: true, viewerId: req.user.id }), "Profile loaded");
+  return success(res, await profileForUser(user, { viewerId: req.user.id }), "Profile loaded");
 });
 
 exports.getProfileByUsername = asyncHandler(async (req, res) => {
@@ -145,7 +129,73 @@ exports.getProfileByUsername = asyncHandler(async (req, res) => {
     throw httpError(404, "User not found");
   }
 
-  return success(res, await profileForUser(user), "Profile loaded");
+  return success(res, await profileForUser(user, { viewerId: req.user?.id }), "Profile loaded");
+});
+
+const eventDateWithTime = (dateValue, timeValue, fallbackTime) => {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.valueOf())) return null;
+  const match = String(timeValue || fallbackTime).match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return null;
+  date.setUTCHours(Number(match[1]), Number(match[2]), 0, 0);
+  return date;
+};
+
+const serializeProfileEvent = (event, now = new Date()) => {
+  const startsAt = event.startsAt ? new Date(event.startsAt) : eventDateWithTime(event.date, event.startTime, "00:00");
+  const endsAt = event.endsAt ? new Date(event.endsAt) : eventDateWithTime(event.date, event.endTime, "23:59");
+  const status = endsAt && endsAt < now ? "past" : startsAt && startsAt <= now ? "ongoing" : "upcoming";
+  return { ...event, status };
+};
+
+exports.getProfileContent = asyncHandler(async (req, res) => {
+  const username = req.validated?.params?.username ?? req.params.username.toLowerCase();
+  const { limit, page, type } = req.validated?.query ?? req.query;
+  const skip = (page - 1) * limit;
+  const user = await User.findOne({ ...activeAccountFilter, username }).select("_id").lean();
+
+  if (!user) throw httpError(404, "User not found");
+
+  let items = [];
+  let total = 0;
+
+  if (type === "finspo") {
+    const filter = { isArchived: { $ne: true }, userId: user._id };
+    [items, total] = await Promise.all([
+      GalleryPost.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      GalleryPost.countDocuments(filter),
+    ]);
+  } else if (type === "listings") {
+    const shop = await DigiShop.findOne({ ownerId: user._id }).select("_id").lean();
+    if (shop) {
+      const filter = { shopId: shop._id, status: "active", visibility: { $ne: "event" } };
+      [items, total] = await Promise.all([
+        Listing.find(filter)
+          .populate("shopId", "shopName slug rating totalReviews location logoUrl")
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Listing.countDocuments(filter),
+      ]);
+    }
+  } else {
+    const filter = { organizerId: user._id };
+    const [events, eventTotal] = await Promise.all([
+      Event.find(filter).sort({ date: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Event.countDocuments(filter),
+    ]);
+    items = events.map((event) => serializeProfileEvent(event));
+    total = eventTotal;
+  }
+
+  return success(res, {
+    items,
+    page,
+    pages: Math.ceil(total / limit),
+    total,
+    type,
+  }, "Profile content loaded");
 });
 
 exports.toggleFollow = asyncHandler(async (req, res) => {
@@ -196,6 +246,77 @@ exports.followStatus = asyncHandler(async (req, res) => {
   ]);
 
   return success(res, { following: Boolean(followingRecord), followerCount }, "Follow status loaded");
+});
+
+const connectionMemberFields = "_id name username profilePhoto isKycVerified hasShop";
+
+exports.getProfileConnections = asyncHandler(async (req, res) => {
+  const username = req.validated?.params?.username ?? req.params.username.toLowerCase();
+  const { limit, page, type } = req.validated?.query ?? req.query;
+  const target = await User.findOne({ ...activeAccountFilter, username }).select("_id username following").lean();
+  if (!target) throw httpError(404, "User not found");
+
+  const owner = Boolean(req.user?.id && target._id.toString() === req.user.id);
+  if (!owner && Number(page) > 1) {
+    throw httpError(403, `Only @${target.username} can see all ${type}`);
+  }
+
+  const connectionFilter = type === "followers"
+    ? { ...activeAccountFilter, following: target._id }
+    : { ...activeAccountFilter, _id: { $in: target.following || [] } };
+  const total = await User.countDocuments(connectionFilter);
+  const restricted = !owner && total > 30;
+  const effectivePage = owner ? Number(page) : 1;
+  const effectiveLimit = owner ? Number(limit) : 30;
+  const items = await User.find(connectionFilter)
+    .select(connectionMemberFields)
+    .sort({ username: 1, _id: 1 })
+    .skip((effectivePage - 1) * effectiveLimit)
+    .limit(effectiveLimit)
+    .lean();
+
+  return success(res, {
+    items,
+    page: effectivePage,
+    pages: restricted ? 1 : Math.max(1, Math.ceil(total / effectiveLimit)),
+    restricted,
+    total,
+    type,
+  }, "Profile connections loaded");
+});
+
+exports.unfollowUser = asyncHandler(async (req, res) => {
+  const username = req.validated?.params?.username ?? req.params.username.toLowerCase();
+  const target = await User.findOne({ ...activeAccountFilter, username }).select("_id").lean();
+  if (!target) throw httpError(404, "User not found");
+  if (target._id.toString() === req.user.id) throw httpError(400, "You cannot unfollow yourself");
+
+  const currentUser = await User.findByIdAndUpdate(
+    req.user.id,
+    { $pull: { following: target._id } },
+    { new: true },
+  ).select("following").lean();
+  const followingCount = await User.countDocuments({
+    ...activeAccountFilter,
+    _id: { $in: currentUser?.following || [] },
+  });
+
+  return success(res, { following: false, followingCount }, "User unfollowed");
+});
+
+exports.removeFollower = asyncHandler(async (req, res) => {
+  const username = req.validated?.params?.username ?? req.params.username.toLowerCase();
+  const follower = await User.findOne({ ...activeAccountFilter, username }).select("_id").lean();
+  if (!follower) throw httpError(404, "User not found");
+  if (follower._id.toString() === req.user.id) throw httpError(400, "You cannot remove yourself");
+
+  const removedFollower = await User.findOneAndUpdate(
+    { _id: follower._id, following: req.user.id },
+    { $pull: { following: req.user.id } },
+  ).select("_id").lean();
+  const followerCount = await User.countDocuments({ ...activeAccountFilter, following: req.user.id });
+
+  return success(res, { followerCount, removed: Boolean(removedFollower) }, "Follower removed");
 });
 
 exports.changePassword = asyncHandler(async (req, res) => {

@@ -48,8 +48,8 @@ const suggestionQuerySchema = z.object({
   }
 });
 
-router.get("/featured", controller.getFeatured);
-router.get("/top-picks", controller.getTopPicks);
+router.get("/featured", optionalAuth, controller.getFeatured);
+router.get("/top-picks", optionalAuth, controller.getTopPicks);
 router.get("/popular-searches", controller.getPopularSearches);
 router.get("/top-sellers", controller.getTopSellers);
 router.get(
@@ -64,7 +64,7 @@ router.get(
   ),
   controller.getUnifiedSuggestions,
 );
-router.get("/items", controller.searchListings);
+router.get("/items", optionalAuth, controller.searchListings);
 router.get(
   "/",
   optionalAuth,

@@ -2,6 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const controller = require("../controllers/paymentController");
 const auth = require("../middleware/authMiddleware");
+const requireEmailVerified = require("../middleware/emailVerificationMiddleware");
 const { hasShop } = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
 
@@ -10,6 +11,7 @@ const router = express.Router();
 router.post(
   "/initialize",
   auth,
+  requireEmailVerified,
   validate(
     z.object({
       body: z.object({
@@ -23,9 +25,24 @@ router.post(
   controller.initializePayment,
 );
 router.get("/verify/:reference", auth, controller.verifyPayment);
+router.delete(
+  "/:reference",
+  auth,
+  validate(
+    z.object({
+      body: z.object({}).optional(),
+      params: z.object({
+        reference: z.string().min(1).max(128).regex(/^[A-Za-z0-9._=-]+$/),
+      }),
+      query: z.object({}),
+    }),
+  ),
+  controller.cancelPayment,
+);
 router.post(
   "/promotions/initialize",
   auth,
+  requireEmailVerified,
   validate(
     z.object({
       body: z.object({
