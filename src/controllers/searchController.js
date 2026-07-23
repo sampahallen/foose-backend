@@ -208,7 +208,7 @@ exports.getTopPicks = asyncHandler(async (req, res) => {
   const data = await withCache(cacheKey, 120, () =>
     listingSearchData(req.query, {
       promotionTags: TOP_PICK_TAG,
-      promotionExpiresAt: { $gte: now },
+      promotionExpiresAt: { $gt: now },
       ...(ownShopId ? { shopId: { $ne: ownShopId } } : {}),
     }),
   );

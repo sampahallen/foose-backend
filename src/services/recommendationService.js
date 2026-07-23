@@ -478,7 +478,7 @@ const locationOptions = (listings) => {
 const isPromoted = (listing, now = new Date()) =>
   listing.promotionTags?.includes("top-pick") &&
   listing.promotionExpiresAt &&
-  new Date(listing.promotionExpiresAt) >= now;
+  new Date(listing.promotionExpiresAt) > now;
 
 const stableQuery = (query) => Object.keys(query)
   .filter((key) => !["limit", "page"].includes(key))

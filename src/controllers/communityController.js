@@ -78,15 +78,6 @@ const activeGalleryPostFilter = (postId) => ({
 
 const finspoActor = (req) => req.currentUser;
 
-const promotionTags = (value) => {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  return String(value)
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-};
-
 const BASE_EVENT_POPULATE = [
   { path: "organizerId", select: "name username profilePhoto hasShop" },
   { path: "shopId", select: "shopName slug logoUrl ownerId" },
@@ -295,7 +286,6 @@ const eventInput = async (req, currentEvent) => {
   ["title", "description"].forEach((field) => {
     if (req.body[field] !== undefined) payload[field] = req.body[field];
   });
-  if (req.body.promotionTags !== undefined) payload.promotionTags = promotionTags(req.body.promotionTags);
   if (req.fileUrls?.[0]) payload.coverImage = req.fileUrls[0];
 
   if (nextType === "online-pop-up") {
@@ -342,7 +332,7 @@ exports.listFeaturedEvents = asyncHandler(async (req, res) => {
     Event.find({
       ...upcomingEventFilter(),
       promotionTags: { $in: ["featured", "home-featured", "home-banner"] },
-      promotionExpiresAt: { $gte: now },
+      promotionExpiresAt: { $gt: now },
     })
       .populate(EVENT_PUBLIC_POPULATE)
       .sort({ startsAt: 1, date: 1, createdAt: -1 })

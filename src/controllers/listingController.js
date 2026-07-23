@@ -30,15 +30,6 @@ const parseVolumeDiscounts = (value) => {
   }
 };
 
-const parsePromotionTags = (value) => {
-  if (!value) return undefined;
-  if (Array.isArray(value)) return value;
-  return String(value)
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-};
-
 const parseImageList = (value) => {
   if (value === undefined) return undefined;
   const values = Array.isArray(value) ? value : [value];
@@ -80,6 +71,9 @@ const normalizeListingTypeFields = (input, currentListing) => {
 
 const listingInput = (req, currentListing) => {
   const input = { ...req.body };
+  delete input.promotionTags;
+  delete input.promotionExpiresAt;
+  delete input.promotionReferences;
   ["price", "quantity", "bulkMinQty"].forEach((field) => {
     if (input[field] !== undefined && input[field] !== "") {
       input[field] = Number(input[field]);
@@ -89,7 +83,6 @@ const listingInput = (req, currentListing) => {
   const volumeDiscounts = parseVolumeDiscounts(req.body.volumeDiscounts);
   if (volumeDiscounts) input.volumeDiscounts = volumeDiscounts;
   if (req.body.hashtags !== undefined) input.hashtags = normalizeHashtags(req.body.hashtags);
-  if (req.body.promotionTags !== undefined) input.promotionTags = parsePromotionTags(req.body.promotionTags);
   if (currentListing) {
     const keptImagesTouched = req.body.keptImagesTouched !== undefined;
     const keptImages = parseImageList(req.body.keptImages);

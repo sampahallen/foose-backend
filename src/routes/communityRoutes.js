@@ -19,7 +19,6 @@ const eventBody = z.object({
   location: z.string().optional(),
   type: z.enum(eventTypes).optional(),
   status: z.enum(["upcoming", "ongoing", "past"]).optional(),
-  promotionTags: z.any().optional(),
 }).strict();
 
 const galleryBody = z.object({

@@ -55,7 +55,6 @@ const listingBody = z.object({
   keptImages: z.any().optional(),
   keptImagesTouched: z.any().optional(),
   volumeDiscounts: z.any().optional(),
-  promotionTags: z.any().optional(),
   visibility: z.enum(["marketplace", "event"]).optional(),
   status: z.enum(["active", "sold", "draft", "removed"]).optional(),
 }).strict();

@@ -48,6 +48,7 @@ router.post(
       body: z.object({
         callbackUrl: z.string().url().optional(),
         packageName: z.enum(["basic", "lite", "premium"]).optional(),
+        tier: z.enum(["quick_boost", "weekend_push", "top_pick", "homepage_feature"]).optional(),
         targetId: z.string().min(1).optional(),
         targetIds: z.array(z.string().min(1)).max(30).optional(),
         targetType: z.enum(["listing", "event"]),

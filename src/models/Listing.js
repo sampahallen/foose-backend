@@ -143,6 +143,11 @@ const listingSchema = new Schema(
       type: Date,
       index: true,
     },
+    promotionReferences: {
+      type: [String],
+      default: [],
+      select: false,
+    },
     visibility: {
       type: String,
       enum: ["marketplace", "event"],

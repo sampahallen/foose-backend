@@ -18,6 +18,13 @@ const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
 const { awardPurchaseForOrder } = require("../services/recommendationService");
 const { runSearchSync, syncListingSearchDocument } = require("../services/searchIndexService");
+const {
+  createPromotionOrder,
+  fulfilPromotionOrder,
+  tierConfig,
+  uniqueIds,
+  loadEligibleTargets,
+} = require("../services/promotionService");
 
 const orderPopulate = [
   { path: "shopId", select: "ownerId shopName slug" },
@@ -291,6 +298,49 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
 exports.initializePromotionPayment = asyncHandler(async (req, res) => {
   const targetType = req.body.targetType;
   const targetId = req.body.targetId;
+  if (req.body.tier) {
+    const config = tierConfig(req.body.tier, targetType);
+    if (!config) throw httpError(422, "Choose a valid promotion tier");
+    const targetIds = uniqueIds([...(req.body.targetIds || []), ...(targetId ? [targetId] : [])]);
+    await loadEligibleTargets({ ownerId: req.user.id, targetIds, targetType });
+    const totalAmount = config.unitAmount * targetIds.length;
+    const transaction = await initializeTransaction({
+      callbackUrl: req.body.callbackUrl,
+      email: req.user.email,
+      amount: totalAmount,
+      metadata: {
+        durationHours: config.durationHours,
+        purpose: "promotion",
+        promotionVersion: 2,
+        targetIds,
+        targetType,
+        tier: req.body.tier,
+        unitAmount: config.unitAmount,
+        userId: req.user.id,
+      },
+    });
+    const order = await createPromotionOrder({
+      ownerId: req.user.id,
+      paymentReference: transaction.reference,
+      targetIds,
+      targetType,
+      tier: req.body.tier,
+      validated: true,
+    });
+    return success(res, {
+      payment: {
+        ...toInlinePayment(transaction),
+        amount: totalAmount,
+        amountGhs: totalAmount / 100,
+        durationHours: config.durationHours,
+        promotionOrderId: order._id,
+        targetIds,
+        targetType,
+        tier: req.body.tier,
+        unitAmount: config.unitAmount,
+      },
+    }, "Promotion payment initialized");
+  }
   const config = promotionPackage(targetType, req.body.packageName);
 
   if (!config) throw httpError(422, "Choose listing or event promotion");
@@ -334,6 +384,14 @@ exports.initializePromotionPayment = asyncHandler(async (req, res) => {
 
 exports.verifyPromotionPayment = asyncHandler(async (req, res) => {
   const transaction = await verifyTransaction(req.params.reference);
+
+  const promotionOrder = await fulfilPromotionOrder({ transaction, userId: req.user.id });
+  if (promotionOrder) {
+    return success(res, {
+      promotion: promotionOrder,
+      targetType: promotionOrder.targetType,
+    }, "Promotion verified and activated");
+  }
 
   if (transaction.status !== "success") {
     throw httpError(400, "Promotion payment was not successful");
@@ -437,6 +495,7 @@ exports.webhook = asyncHandler(async (req, res) => {
 
   if (req.body.event === "charge.success") {
     const reference = req.body.data.reference;
+    await fulfilPromotionOrder({ transaction: req.body.data });
     const orders = await Order.find({ paymentRef: reference });
 
     await Promise.all(

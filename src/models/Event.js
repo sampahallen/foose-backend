@@ -71,6 +71,11 @@ const eventSchema = new Schema(
       type: Date,
       index: true,
     },
+    promotionReferences: {
+      type: [String],
+      default: [],
+      select: false,
+    },
     type: {
       type: String,
       enum: ["online-pop-up", "in-person-pop-up", "pop-up", "fair", "online"],

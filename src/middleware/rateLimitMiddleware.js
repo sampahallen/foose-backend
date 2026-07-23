@@ -64,9 +64,18 @@ const verificationEmailLimiter = createLimiter({
   },
 });
 
+const promotionMetricLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many promotion analytics requests. Please try again later." },
+});
+
 module.exports = {
   authLimiter,
   generalLimiter,
   kycLimiter,
+  promotionMetricLimiter,
   verificationEmailLimiter,
 };
