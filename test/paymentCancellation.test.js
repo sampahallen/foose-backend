@@ -3,7 +3,9 @@ const assert = require("node:assert/strict");
 
 test("payment cancellation releases reserved inventory exactly once", async (t) => {
   const Order = require("../src/models/Order");
+  const OrderEvent = require("../src/models/OrderEvent");
   const Listing = require("../src/models/Listing");
+  const PaymentTransaction = require("../src/models/PaymentTransaction");
   const paystackService = require("../src/services/paystackService");
   const searchService = require("../src/services/searchIndexService");
   const cache = require("../src/utils/cache");
@@ -11,8 +13,13 @@ test("payment cancellation releases reserved inventory exactly once", async (t) 
   const originals = {
     invalidate: cache.invalidate,
     listingUpdateOne: Listing.updateOne,
+    orderEventCreate: OrderEvent.create,
     orderFind: Order.find,
     orderFindOneAndUpdate: Order.findOneAndUpdate,
+    orderUpdateMany: Order.updateMany,
+    paymentCreate: PaymentTransaction.create,
+    paymentFindOne: PaymentTransaction.findOne,
+    paymentUpdateOne: PaymentTransaction.updateOne,
     runSearchSync: searchService.runSearchSync,
     syncListingSearchDocument: searchService.syncListingSearchDocument,
     verifyTransaction: paystackService.verifyTransaction,
@@ -21,8 +28,13 @@ test("payment cancellation releases reserved inventory exactly once", async (t) 
   t.after(() => {
     cache.invalidate = originals.invalidate;
     Listing.updateOne = originals.listingUpdateOne;
+    OrderEvent.create = originals.orderEventCreate;
     Order.find = originals.orderFind;
     Order.findOneAndUpdate = originals.orderFindOneAndUpdate;
+    Order.updateMany = originals.orderUpdateMany;
+    PaymentTransaction.create = originals.paymentCreate;
+    PaymentTransaction.findOne = originals.paymentFindOne;
+    PaymentTransaction.updateOne = originals.paymentUpdateOne;
     searchService.runSearchSync = originals.runSearchSync;
     searchService.syncListingSearchDocument = originals.syncListingSearchDocument;
     paystackService.verifyTransaction = originals.verifyTransaction;
@@ -53,6 +65,11 @@ test("payment cancellation releases reserved inventory exactly once", async (t) 
     listingUpdates.push({ filter, update });
     return { modifiedCount: 1 };
   };
+  OrderEvent.create = async () => [];
+  Order.updateMany = async () => ({ modifiedCount: 1 });
+  PaymentTransaction.findOne = async () => null;
+  PaymentTransaction.create = async () => [{ _id: "payment-1" }];
+  PaymentTransaction.updateOne = async () => ({ modifiedCount: 1 });
   cache.invalidate = async () => undefined;
   searchService.runSearchSync = async (_key, operation) => operation();
   searchService.syncListingSearchDocument = async () => undefined;
@@ -83,8 +100,14 @@ test("payment cancellation releases reserved inventory exactly once", async (t) 
   assert.equal(second.data.cancelled, true);
   assert.equal(second.data.releasedItemCount, 0);
   assert.equal(listingUpdates.length, 1);
-  assert.deepEqual(listingUpdates[0].update, {
-    $inc: { quantity: 2 },
-    $set: { status: "active" },
-  });
+  assert.deepEqual(listingUpdates[0].update, [
+    {
+      $set: {
+        quantity: { $add: [{ $ifNull: ["$quantity", 0] }, 2] },
+        status: {
+          $cond: [{ $eq: ["$status", "sold"] }, "active", "$status"],
+        },
+      },
+    },
+  ]);
 });

@@ -2,6 +2,7 @@ const DigiShop = require("../models/DigiShop");
 const KYC = require("../models/KYC");
 const Listing = require("../models/Listing");
 const Order = require("../models/Order");
+const OrderReport = require("../models/OrderReport");
 const SiteAnalyticsEvent = require("../models/SiteAnalyticsEvent");
 const User = require("../models/User");
 const mongoose = require("mongoose");
@@ -107,7 +108,7 @@ exports.stats = asyncHandler(async (req, res) => {
     Listing.countDocuments({ status: "active" }),
     KYC.countDocuments({ status: "pending" }),
     Order.countDocuments({ status: "pending" }),
-    Order.countDocuments({ status: "disputed" }),
+    OrderReport.countDocuments({ isActive: true }),
     Order.aggregate([
       { $match: { status: "delivered" } },
       { $group: { _id: null, total: { $sum: "$totalAmount" } } },
@@ -156,14 +157,23 @@ exports.stats = asyncHandler(async (req, res) => {
       },
       { $sort: { _id: 1 } },
     ]),
-    Order.aggregate([
-      { $match: { status: "disputed", createdAt: { $gte: since } } },
-      { $group: { _id: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }, disputes: { $sum: 1 } } },
+    OrderReport.aggregate([
+      { $match: { isActive: true, submittedAt: { $gte: since } } },
+      { $group: { _id: { $dateToString: { date: "$submittedAt", format: "%Y-%m-%d" } }, disputes: { $sum: 1 } } },
       { $sort: { _id: 1 } },
     ]),
-    Order.aggregate([
-      { $match: { status: "disputed" } },
-      { $group: { _id: "$escrowStatus", count: { $sum: 1 } } },
+    OrderReport.aggregate([
+      { $match: { isActive: true } },
+      {
+        $lookup: {
+          from: Order.collection.name,
+          localField: "orderId",
+          foreignField: "_id",
+          as: "order",
+        },
+      },
+      { $unwind: "$order" },
+      { $group: { _id: "$order.settlementStatus", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
   ]);
@@ -590,42 +600,32 @@ exports.removeListing = asyncHandler(async (req, res) => {
 });
 
 exports.disputes = asyncHandler(async (req, res) => {
-  const orders = await Order.find({ status: "disputed" })
+  const reports = await OrderReport.find({ isActive: true })
     .populate("buyerId", "name email username")
     .populate("shopId", "shopName ownerId")
-    .sort({ updatedAt: -1 });
+    .populate({
+      path: "orderId",
+      populate: [
+        { path: "buyerId", select: "name email username" },
+        { path: "shopId", select: "shopName ownerId" },
+      ],
+    })
+    .sort({ submittedAt: 1, _id: 1 });
 
-  return success(res, { orders }, "Disputes loaded");
+  return success(
+    res,
+    {
+      orders: reports.map((report) => report.orderId).filter(Boolean),
+      readOnly: true,
+      reports,
+    },
+    "Order reports loaded read-only",
+  );
 });
 
 exports.resolveDispute = asyncHandler(async (req, res) => {
-  const order = await Order.findOne({
-    _id: req.params.orderId,
-    status: "disputed",
-  }).populate("shopId", "ownerId shopName");
-
-  if (!order) throw httpError(404, "Disputed order not found");
-  if (!["seller", "buyer"].includes(req.body.resolveFor)) {
-    throw httpError(422, "resolveFor must be seller or buyer");
-  }
-
-  if (req.body.resolveFor === "seller") {
-    const seller = await User.findById(order.shopId.ownerId);
-    seller.wallet.balance += order.totalAmount;
-    seller.wallet.escrow = Math.max(seller.wallet.escrow - order.totalAmount, 0);
-    await seller.save();
-    order.escrowStatus = "released";
-    order.status = "delivered";
-  } else {
-    const buyer = await User.findById(order.buyerId);
-    buyer.wallet.balance += order.totalAmount;
-    await buyer.save();
-    order.escrowStatus = "refunded";
-    order.status = "refunded";
-  }
-
-  order.disputeResolvedAt = new Date();
-  await order.save();
-
-  return success(res, { order }, "Dispute resolved");
+  throw httpError(
+    410,
+    "Order report resolution is read-only until the dedicated resolution workflow is released",
+  );
 });

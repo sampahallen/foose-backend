@@ -115,8 +115,21 @@ const sendSellerOrderEmail = (seller, order, buyer) =>
     subject: "New Foose order needs your action",
     text: `Order ${order._id} for ${order.items?.[0]?.title || "an item"} was placed by ${
       buyer.name || buyer.username || buyer.email
-    }. Please process it within 48 hours from your shop dashboard.`,
+    }. Please prepare it within 72 hours from your shop dashboard.`,
   });
+
+const sendOrderLifecycleEmail = ({ user, order, subject, message }) => {
+  if (!user?.email) return Promise.resolve({ skipped: true });
+
+  const clientUrl = String(process.env.CLIENT_URL || "").replace(/\/$/, "");
+  const orderUrl = clientUrl ? `${clientUrl}/orders/${order._id}` : `/orders/${order._id}`;
+
+  return sendEmail({
+    to: user.email,
+    subject,
+    text: `${message}\n\nOpen order ${order._id}: ${orderUrl}`,
+  });
+};
 
 module.exports = {
   sendEmail,
@@ -124,5 +137,6 @@ module.exports = {
   sendKycRejectedEmail,
   sendPasswordResetEmail,
   sendDigiShopWelcomeEmail,
+  sendOrderLifecycleEmail,
   sendSellerOrderEmail,
 };

@@ -17,14 +17,23 @@ const requirePaystackKey = () => {
   }
 };
 
-const initializeTransaction = async ({ callbackUrl, email, amount, metadata }) => {
+const initializeTransaction = async ({
+  callbackUrl,
+  currency = "GHS",
+  email,
+  amount,
+  metadata,
+  reference,
+}) => {
   requirePaystackKey();
 
   const response = await paystackClient.post("/transaction/initialize", {
     callback_url: callbackUrl,
     email,
     amount,
+    currency,
     metadata,
+    reference,
   });
 
   return response.data.data;
@@ -65,21 +74,66 @@ const initiateTransfer = async ({ amount, recipient, reason }) => {
   return response.data.data;
 };
 
+const createRefund = async ({
+  amount,
+  currency = "GHS",
+  customerNote,
+  merchantNote,
+  transaction,
+}) => {
+  requirePaystackKey();
+
+  const response = await paystackClient.post("/refund", {
+    transaction,
+    amount,
+    currency,
+    customer_note: customerNote,
+    merchant_note: merchantNote,
+  });
+
+  return response.data.data;
+};
+
+const fetchRefund = async (refundId) => {
+  requirePaystackKey();
+  const response = await paystackClient.get(`/refund/${refundId}`);
+  return response.data.data;
+};
+
+const listRefunds = async ({ currency, page = 1, perPage = 50, transaction }) => {
+  requirePaystackKey();
+  const response = await paystackClient.get("/refund", {
+    params: {
+      currency,
+      page,
+      perPage,
+      transaction,
+    },
+  });
+  return response.data.data;
+};
+
 const verifyWebhookSignature = (rawBody, signature) => {
-  if (!process.env.PAYSTACK_SECRET_KEY) return true;
+  const secret = process.env.PAYSTACK_SECRET_KEY?.trim();
+  if (!secret || typeof signature !== "string" || !signature) return false;
 
   const hash = crypto
-    .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
+    .createHmac("sha512", secret)
     .update(rawBody)
     .digest("hex");
 
-  return hash === signature;
+  const expected = Buffer.from(hash, "utf8");
+  const received = Buffer.from(signature, "utf8");
+  return expected.length === received.length && crypto.timingSafeEqual(expected, received);
 };
 
 module.exports = {
+  createRefund,
+  fetchRefund,
   initializeTransaction,
   toInlinePayment,
   verifyTransaction,
   initiateTransfer,
   verifyWebhookSignature,
+  listRefunds,
 };

@@ -9,6 +9,7 @@ const { startAccountLifecycleCleanup } = require("./src/utils/accountLifecycle")
 const { startFinspoLifecycleCleanup } = require("./src/utils/finspoLifecycle");
 const { backfillShadowProfiles } = require("./src/services/recommendationService");
 const { backfillMarketplaceLocations } = require("./src/services/locationBackfillService");
+const { startOrderLifecycleWorker } = require("./src/services/orderLifecycleWorker");
 const { invalidate, invalidatePattern } = require("./src/utils/cache");
 
 const PORT = process.env.PORT || 5000;
@@ -48,6 +49,7 @@ const start = async () => {
     }
     startAccountLifecycleCleanup();
     startFinspoLifecycleCleanup();
+    startOrderLifecycleWorker();
   } catch (error) {
     console.error("MongoDB connection failed:", error.message);
     // Don't crash - let the server run

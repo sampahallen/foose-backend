@@ -1,5 +1,10 @@
-const { S3Client } = require("@aws-sdk/client-s3");
+const {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  S3Client,
+} = require("@aws-sdk/client-s3");
 const { Upload } = require("@aws-sdk/lib-storage");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const envValue = (name) => (process.env[name] || "").trim();
 
@@ -51,6 +56,57 @@ const uploadBuffer = async ({ buffer, mimetype, key }) => {
   return publicUrlForKey(key);
 };
 
+const uploadPrivateBuffer = async ({ buffer, mimetype, key }) => {
+  if (!s3Client) {
+    const error = new Error(
+      "Private attachment storage is unavailable; configure the S3 environment before uploading",
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const upload = new Upload({
+    client: s3Client,
+    params: {
+      Bucket: envValue("S3_BUCKET_NAME"),
+      Key: key,
+      Body: buffer,
+      ContentType: mimetype,
+    },
+  });
+
+  await upload.done();
+  return { key, storage: "s3" };
+};
+
+const deletePrivateObject = async (key) => {
+  if (!key || !s3Client) return;
+
+  await s3Client.send(
+    new DeleteObjectCommand({
+      Bucket: envValue("S3_BUCKET_NAME"),
+      Key: key,
+    }),
+  );
+};
+
+const createPrivateDownloadUrl = async (key, expiresIn = 300) => {
+  if (!key) return null;
+  if (!s3Client) return null;
+
+  return getSignedUrl(
+    s3Client,
+    new GetObjectCommand({
+      Bucket: envValue("S3_BUCKET_NAME"),
+      Key: key,
+    }),
+    { expiresIn: Math.min(Math.max(Number(expiresIn) || 300, 1), 300) },
+  );
+};
+
 module.exports = {
+  createPrivateDownloadUrl,
+  deletePrivateObject,
   uploadBuffer,
+  uploadPrivateBuffer,
 };

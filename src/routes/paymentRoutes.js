@@ -8,6 +8,32 @@ const validate = require("../middleware/validateMiddleware");
 
 const router = express.Router();
 
+router.get(
+  "/wallet/ledger",
+  auth,
+  hasShop,
+  validate(
+    z.object({
+      body: z.object({}).optional(),
+      params: z.object({}),
+      query: z.object({
+        cursor: z.string().min(1).max(500).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+        type: z
+          .enum([
+            "escrow_hold",
+            "escrow_release",
+            "escrow_refund",
+            "withdrawal",
+            "adjustment",
+          ])
+          .optional(),
+      }),
+    }),
+  ),
+  controller.getWalletLedger,
+);
+
 router.post(
   "/initialize",
   auth,
@@ -24,7 +50,21 @@ router.post(
   ),
   controller.initializePayment,
 );
-router.get("/verify/:reference", auth, controller.verifyPayment);
+router.get("/verify/:reference", auth, controller.getPaymentStatus);
+router.post(
+  "/:reference/actions/verify",
+  auth,
+  validate(
+    z.object({
+      body: z.object({}).optional().default({}),
+      params: z.object({
+        reference: z.string().min(1).max(128).regex(/^[A-Za-z0-9._=-]+$/),
+      }),
+      query: z.object({}),
+    }),
+  ),
+  controller.verifyPayment,
+);
 router.delete(
   "/:reference",
   auth,

@@ -22,6 +22,7 @@ const hashtagRoutes = require("./routes/hashtagRoutes");
 const SiteAnalyticsEvent = require("./models/SiteAnalyticsEvent");
 const { generalLimiter } = require("./middleware/rateLimitMiddleware");
 const { success, error } = require("./utils/apiResponse");
+const { deletePrivateObject } = require("./config/s3");
 
 const app = express();
 
@@ -71,6 +72,20 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  const committedPrivateKeys = new Set([
+    ...(err.committedPrivateKeys || []),
+    ...(req.committedPrivateKeys || []),
+  ]);
+  const privateKeys = [
+    ...(err.uploadedPrivateKeys || []),
+    ...((req.privateUploads || []).map((upload) => upload.key)),
+  ].filter((key) => key && !committedPrivateKeys.has(key));
+  if (privateKeys.length) {
+    void Promise.allSettled(
+      [...new Set(privateKeys)].map((key) => deletePrivateObject(key)),
+    );
+  }
+
   if (err.name === "MulterError") {
     return error(res, err.message, 400);
   }

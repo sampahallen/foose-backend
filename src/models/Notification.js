@@ -40,12 +40,47 @@ const notificationSchema = new Schema(
       default: false,
       index: true,
     },
+    lifecycleEmailSentAt: {
+      type: Date,
+      select: false,
+    },
+    lifecycleEmailRequired: {
+      type: Boolean,
+      default: false,
+      select: false,
+    },
+    lifecycleEmailAttemptCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+      select: false,
+    },
+    lifecycleEmailLastAttemptAt: {
+      type: Date,
+      select: false,
+    },
+    lifecycleEmailLastError: {
+      type: String,
+      maxlength: 500,
+      default: "",
+      select: false,
+    },
+    lifecycleEmailClaim: {
+      token: { type: String, select: false },
+      until: { type: Date, select: false },
+    },
   },
   {
     timestamps: true,
     toJSON: {
       transform(_document, value) {
         delete value.eventKey;
+        delete value.lifecycleEmailRequired;
+        delete value.lifecycleEmailSentAt;
+        delete value.lifecycleEmailAttemptCount;
+        delete value.lifecycleEmailLastAttemptAt;
+        delete value.lifecycleEmailLastError;
+        delete value.lifecycleEmailClaim;
         return value;
       },
     },
@@ -63,6 +98,10 @@ notificationSchema.index(
 notificationSchema.index(
   { userId: 1, isRead: 1, createdAt: -1 },
   { name: "notification_user_read_created" },
+);
+notificationSchema.index(
+  { type: 1, lifecycleEmailSentAt: 1, "lifecycleEmailClaim.until": 1 },
+  { name: "notification_lifecycle_email_pending" },
 );
 
 module.exports = mongoose.model("Notification", notificationSchema);

@@ -66,6 +66,31 @@ npm run locations:backfill
 
 The migration fills an incomplete DigiShop location from its owner's account location, then snapshots that location onto legacy listings. Shops whose owner also lacks a complete city and region are reported and left unchanged. Search caches are cleared when records change.
 
+## Order Lifecycle Rollout
+
+Automatic pickup refunds and delivery releases are opt-in. Deploy the schemas and
+indexes first, run and audit the idempotent migration, deploy the matching API and
+UI, and only then enable the worker:
+
+```bash
+npm run orders:lifecycle:migrate -- --dry-run
+```
+
+Review the reported manual holds and record counts, then apply the same
+idempotent migration:
+
+```bash
+npm run orders:lifecycle:migrate
+```
+
+```env
+ORDER_LIFECYCLE_WORKER_ENABLED=true
+ORDER_LIFECYCLE_WORKER_INTERVAL_MS=60000
+```
+
+If `ORDER_LIFECYCLE_WORKER_ENABLED` is omitted or set to anything other than
+`true`, deadline processing stays disabled.
+
 ## REST Client Tests
 
 Install the VS Code extension **REST Client** by Huachao Mao, then open files in `rest-client/` and click **Send Request** above any request.
