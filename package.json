@@ -5,9 +5,11 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
+    "dev:local": "npm run mongo:local && nodemon server.js",
     "build": "npm run compile",
     "start": "node server.js",
     "check": "node --check server.js && node --check src/app.js",
+    "mongo:local": "node scripts/startLocalMongoReplica.js",
     "hashtags:rebuild": "node scripts/rebuildHashtags.js",
     "search:rebuild": "node scripts/rebuildSearch.js",
     "locations:backfill": "node scripts/backfillLocations.js",

@@ -4,6 +4,7 @@ aws-elastic-beanstalk-cli
 .txt
 uploads
 *.log
+.local-mongodb-rs/
 
 # Elastic Beanstalk Files
 .elasticbeanstalk/*
