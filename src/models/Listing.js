@@ -45,6 +45,11 @@ const listingSchema = new Schema(
       trim: true,
       index: true,
     },
+    subcategory: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     brand: {
       type: String,
       trim: true,
@@ -96,6 +101,24 @@ const listingSchema = new Schema(
       ],
       default: "multi",
       index: true,
+    },
+    attributes: {
+      material: {
+        type: String,
+        enum: ["cotton", "denim", "leather", "faux-leather", "wool", "polyester", "linen", "silk", "canvas", "rubber", "metal", "wood", "mixed", "other"],
+      },
+      fit: {
+        type: String,
+        enum: ["slim", "regular", "relaxed", "oversized", "tailored"],
+      },
+      pattern: {
+        type: String,
+        enum: ["solid", "striped", "checked", "floral", "graphic", "animal", "geometric", "traditional-print", "other"],
+      },
+      baleGrade: {
+        type: String,
+        enum: ["premium", "grade-a", "grade-b", "mixed"],
+      },
     },
     type: {
       type: String,
@@ -170,5 +193,10 @@ const listingSchema = new Schema(
 
 listingSchema.index({ title: "text", brand: "text", description: "text", hashtags: "text" });
 listingSchema.index({ "location.region": 1, "location.city": 1, status: 1 });
+listingSchema.index({ category: 1, subcategory: 1, type: 1, status: 1 });
+listingSchema.index({ "attributes.material": 1 });
+listingSchema.index({ "attributes.fit": 1 });
+listingSchema.index({ "attributes.pattern": 1 });
+listingSchema.index({ "attributes.baleGrade": 1 });
 
 module.exports = mongoose.model("Listing", listingSchema);

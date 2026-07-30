@@ -75,9 +75,10 @@ test("Browse listing filters preserve every marketplace constraint including leg
       size: "UK 8",
       type: "retail",
     });
-    assert.deepEqual(filter.price, { $gte: 100, $lte: 900 });
+    assert.deepEqual(filter.price, { $gte: 10000, $lte: 90000 });
     assert.equal(filter.brand, "Nike");
-    assert.equal(filter.category, "Sneakers");
+    assert.equal(filter.category, "Footwear");
+    assert.equal(filter.subcategory, "Sneakers");
     assert.equal(filter.color, "blue");
     assert.equal(filter.condition, "great");
     assert.equal(filter.gender, "unisex");
@@ -115,7 +116,8 @@ test("item-scoped suggestions apply filters, recheck visibility, and cap the 4/5
   const listings = ids.map((id, index) => ({
     _id: id,
     brand: brands[index % brands.length],
-    category: index === 8 ? "Bags" : "Dresses",
+    category: index === 8 ? "Bags" : "Clothing",
+    subcategory: index === 8 ? "Other Bags" : "Dresses",
     createdAt: documents[index].publishedAt,
     currency: "GHS",
     hashtags: index === 11 ? [] : ["vintage"],
@@ -141,6 +143,7 @@ test("item-scoped suggestions apply filters, recheck visibility, and cap the 4/5
       allowedIds.has(String(listing._id)) &&
       listing.type === filter.type &&
       listing.category === filter.category &&
+      listing.subcategory === filter.subcategory &&
       listing.price >= filter.price.$gte &&
       listing.price <= filter.price.$lte);
     return queryResult(rows);
@@ -156,8 +159,8 @@ test("item-scoped suggestions apply filters, recheck visibility, and cap the 4/5
     const result = await browseSuggestions({
       category: "Dresses",
       limit: 10,
-      maxPrice: 500,
-      minPrice: 100,
+      maxPrice: 5,
+      minPrice: 1,
       q: "vi",
       type: "retail",
     });
@@ -175,7 +178,8 @@ test("item-scoped suggestions apply filters, recheck visibility, and cap the 4/5
     assert.ok(entities.every((suggestion) => suggestion.type === "item" && suggestion.href.startsWith("/listing/")));
     assert.ok(entities.every((suggestion) => suggestion.entity.shopId.shopName === "Visible shop"));
     assert.equal(listingFilter.type, "retail");
-    assert.equal(listingFilter.category, "Dresses");
+    assert.equal(listingFilter.category, "Clothing");
+    assert.equal(listingFilter.subcategory, "Dresses");
     assert.deepEqual(listingFilter.price, { $gte: 100, $lte: 500 });
     assert.equal(listingFilter._id.$in.some((id) => String(id) === String(ids[11])), false);
   } finally {

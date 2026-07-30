@@ -17,6 +17,8 @@ const {
   decodeCursor,
   diversifyRows,
   encodeCursor,
+  prefixSearchMatch,
+  searchTokens,
   shouldLogUnifiedSearch,
   sortPosition,
   textSearchExpression,
@@ -47,6 +49,38 @@ test("autocomplete materialization normalizes text and stores deterministic pref
     autocompleteTokensFor(["Blue Dress", "blue"]),
     ["bl", "blu", "blue", "blue ", "blue d", "blue dr", "blue dre", "blue dres", "blue dress", "dr", "dre", "dres", "dress"],
   );
+});
+
+test("Explore search materializes descriptions and resolves partial word prefixes", () => {
+  const owner = {
+    _id: new mongoose.Types.ObjectId(),
+    accountStatus: "active",
+    username: "seller",
+  };
+  const shop = {
+    _id: new mongoose.Types.ObjectId(),
+    isLive: true,
+    ownerId: owner._id,
+    shopName: "Second Chance",
+  };
+  const listing = {
+    _id: new mongoose.Types.ObjectId(),
+    createdAt: new Date("2030-01-01T00:00:00.000Z"),
+    description: "Relaxed streetwear layering",
+    shopId: shop._id,
+    status: "active",
+    title: "Blue jacket",
+    type: "retail",
+    updatedAt: new Date("2030-01-02T00:00:00.000Z"),
+    visibility: "marketplace",
+  };
+
+  const document = mapListingSearchDocument({ listing, owner, shop });
+  assert.ok(document.autocompleteTokens.includes("street"));
+  assert.deepEqual(searchTokens("  Street lay  "), ["street", "lay"]);
+  assert.deepEqual(prefixSearchMatch("Street lay"), {
+    autocompleteTokens: { $all: ["street", "lay"] },
+  });
 });
 
 test("event visibility uses the explicit end or the end of its calendar day", () => {

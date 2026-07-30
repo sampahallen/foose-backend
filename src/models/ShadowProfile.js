@@ -10,6 +10,7 @@ const scoreMap = () => ({
 const itemAffinitiesSchema = new Schema(
   {
     category: scoreMap(),
+    subcategory: scoreMap(),
     color: scoreMap(),
     digishopId: scoreMap(),
     hashtags: scoreMap(),

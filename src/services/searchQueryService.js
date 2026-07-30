@@ -9,6 +9,7 @@ const User = require("../models/User");
 const httpError = require("../utils/httpError");
 const { normalizeHashtag } = require("../utils/hashtags");
 const { appendQueryClause } = require("../utils/location");
+const { applyCategoryFilter } = require("../utils/listingTaxonomy");
 const { listingLocationClause } = require("./locationService");
 const {
   ACTIVE_ACCOUNT_FILTER,
@@ -42,6 +43,13 @@ const textSearchExpression = (value) =>
     .filter(Boolean)
     .map((token) => `"${token.replace(/"/g, "")}"`)
     .join(" ");
+const searchTokens = (value) =>
+  (normalizeSearchText(value).match(/[\p{L}\p{N}_-]+/gu) || [])
+    .map((token) => token.replace(/^-+/, "").slice(0, 48))
+    .filter((token) => token.length >= 2);
+const prefixSearchMatch = (value) => ({
+  autocompleteTokens: { $all: searchTokens(value) },
+});
 
 const cursorFingerprint = ({ query, mode, scope }) =>
   crypto.createHash("sha256").update(`${mode}:${query}:${scope}`).digest("hex").slice(0, 20);
@@ -210,13 +218,22 @@ const aggregateSearchRows = async ({ after, limit, mode, query, scope, snapshotA
   const isTag = mode === "tag";
   const firstMatch = isTag
     ? { hashtags: query, sourceType: { $in: ["item", "finspo"] } }
-    : { $text: { $search: textSearchExpression(query), $caseSensitive: false, $diacriticSensitive: false } };
+    : prefixSearchMatch(query);
   const scoring = isTag
     ? { $set: { exactRank: 1, relevance: 1 } }
     : {
         $set: {
           exactRank: exactRankExpression(query),
-          relevance: { $meta: "textScore" },
+          relevance: {
+            $add: [
+              { $cond: [{ $eq: ["$primaryNormalized", query] }, 12, 0] },
+              { $cond: [{ $eq: ["$username", query.replace(/^@/, "")] }, 10, 0] },
+              { $cond: [{ $eq: ["$shopNameNormalized", query] }, 8, 0] },
+              { $cond: [{ $in: [normalizeHashtag(query), "$hashtags"] }, 8, 0] },
+              { $cond: [{ $in: [query, "$keywords"] }, 4, 0] },
+              1,
+            ],
+          },
         },
       };
   const scopedTypes = SCOPE_TYPES[scope];
@@ -280,7 +297,7 @@ const hydrateItems = async (ids, listingFilter = {}, excludeOwnerId) => {
     visibility: { $ne: "event" },
     ...listingFilter,
   }).select(
-    "_id shopId location title description hashtags category brand size gender condition color type price currency quantity bulkMinQty bulkWeight volumeDiscounts images promotionTags promotionExpiresAt visibility status views createdAt updatedAt",
+    "_id shopId location title description hashtags category subcategory brand size gender condition color attributes type price currency quantity bulkMinQty bulkWeight volumeDiscounts images promotionTags promotionExpiresAt visibility status views createdAt updatedAt",
   ).lean();
   const shops = await DigiShop.find({
     _id: { $in: listings.map((listing) => listing.shopId) },
@@ -391,7 +408,7 @@ const visiblePrefixLength = (rows, visibleKeys, needed) => {
   return consumed;
 };
 
-const unifiedSearch = async ({ cursor, excludeOwnerId, limit = 50, q, scope = "all", tag }) => {
+const unifiedSearch = async ({ cursor, limit = 50, q, scope = "all", tag }) => {
   let mode = tag ? "tag" : "q";
   let query = tag ? normalizeHashtag(tag) : normalizeSearchText(q);
   if (!tag && String(q || "").trim().startsWith("#")) {
@@ -402,11 +419,13 @@ const unifiedSearch = async ({ cursor, excludeOwnerId, limit = 50, q, scope = "a
   if (mode === "q" && !textSearchExpression(query)) {
     throw httpError(422, "A search query must contain letters or numbers");
   }
+  if (mode === "q" && !searchTokens(query).length) {
+    throw httpError(422, "A search query must contain at least two letters or numbers");
+  }
   const fingerprint = cursorFingerprint({
     mode,
     query,
     scope,
-    ...(excludeOwnerId ? { excludeOwnerId: String(excludeOwnerId) } : {}),
   });
   const state = decodeCursor(cursor, fingerprint);
   let counts = state.counts || { all: 0, items: 0, finspo: 0, events: 0, users: 0 };
@@ -433,7 +452,7 @@ const unifiedSearch = async ({ cursor, excludeOwnerId, limit = 50, q, scope = "a
       break;
     }
 
-    const hydrated = await hydrateSearchRows(page.rows, { excludeOwnerId });
+    const hydrated = await hydrateSearchRows(page.rows);
     const hydratedByKey = new Map(hydrated.map((result) => [resultKey(result), result]));
     const remaining = limit - results.length;
     const consumedCount = visiblePrefixLength(page.rows, new Set(hydratedByKey.keys()), remaining);
@@ -632,25 +651,34 @@ const browseDocumentMatchesPrefix = (document, prefix) => [
 ].some((value) => normalizedWordStartsWith(value, prefix));
 
 const buildBrowseListingFilter = async ({
+  baleGrade,
   brand,
   category,
   color,
   condition,
+  fit,
   gender,
   location,
+  material,
   maxPrice,
   minPrice,
+  pattern,
   size,
+  subcategory,
   type,
 } = {}) => {
   const filter = {};
-  Object.entries({ brand, category, color, condition, gender, size, type }).forEach(([field, value]) => {
+  applyCategoryFilter(filter, category, subcategory);
+  Object.entries({ brand, color, condition, gender, size, type }).forEach(([field, value]) => {
     if (value !== undefined && value !== "") filter[field] = value;
+  });
+  Object.entries({ baleGrade, fit, material, pattern }).forEach(([field, value]) => {
+    if (value !== undefined && value !== "") filter[`attributes.${field}`] = value;
   });
   if (minPrice !== undefined || maxPrice !== undefined) {
     filter.price = {};
-    if (minPrice !== undefined) filter.price.$gte = Number(minPrice);
-    if (maxPrice !== undefined) filter.price.$lte = Number(maxPrice);
+    if (minPrice !== undefined) filter.price.$gte = Math.round(Number(minPrice) * 100);
+    if (maxPrice !== undefined) filter.price.$lte = Math.round(Number(maxPrice) * 100);
   }
   if (location) {
     appendQueryClause(filter, await listingLocationClause(location));
@@ -783,6 +811,8 @@ module.exports = {
   encodeCursor,
   hydrateSearchRows,
   shouldLogUnifiedSearch,
+  prefixSearchMatch,
+  searchTokens,
   sortPosition,
   unifiedSearch,
   unifiedSuggestions,

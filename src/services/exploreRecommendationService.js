@@ -130,7 +130,7 @@ const loadVisibleItems = async ({ ids, limit, ownShopId, snapshot }) => {
   };
   let query = Listing.find(filter)
     .select(
-      "_id shopId location title description hashtags category brand size gender condition color type price currency quantity bulkMinQty bulkWeight volumeDiscounts images promotionTags promotionExpiresAt visibility status views createdAt updatedAt",
+      "_id shopId location title description hashtags category subcategory brand size gender condition color attributes type price currency quantity bulkMinQty bulkWeight volumeDiscounts images promotionTags promotionExpiresAt visibility status views createdAt updatedAt",
     )
     .sort({ createdAt: -1, _id: -1 });
   if (limit) query = query.limit(Math.min(limit * 2, EXPLORE_FEED.CANDIDATE_LIMIT * 2));

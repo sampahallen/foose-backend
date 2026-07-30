@@ -15,6 +15,7 @@ const {
 } = require("../constants/recommendations");
 const { normalizeHashtags } = require("../utils/hashtags");
 const { appendQueryClause, effectiveListingLocation, locationLabel } = require("../utils/location");
+const { applyCategoryFilter } = require("../utils/listingTaxonomy");
 const { listingLocationClause } = require("./locationService");
 const {
   composeFinspoFeed,
@@ -59,6 +60,7 @@ const uniqueValues = (values) =>
 const listingAffinities = (listing) => {
   return {
     category: uniqueValues([listing?.category]),
+    subcategory: uniqueValues([listing?.subcategory]),
     color: uniqueValues([listing?.color]),
     digishopId: uniqueValues([idValue(listing?.shopId)]),
     hashtags: uniqueValues(normalizeHashtags(listing?.hashtags)),
@@ -236,6 +238,7 @@ const scoreListing = (profile, listing) => {
 
   return (
     affinityScore(itemProfile, "category", item.category) +
+    affinityScore(itemProfile, "subcategory", item.subcategory) +
     affinityScore(itemProfile, "color", item.color) +
     affinityScore(itemProfile, "digishopId", item.digishopId) +
     affinityScore(itemProfile, "hashtags", item.hashtags) +
@@ -430,19 +433,24 @@ const listingFilter = async (query, userId) => {
       { title: pattern },
       { brand: pattern },
       { category: pattern },
+      { subcategory: pattern },
       { description: pattern },
       { hashtags: pattern },
     ];
   }
 
-  ["category", "type", "condition", "color", "gender", "size", "brand"].forEach((field) => {
+  applyCategoryFilter(filter, query.category, query.subcategory);
+  ["type", "condition", "color", "gender", "size", "brand"].forEach((field) => {
     if (query[field]) filter[field] = query[field];
+  });
+  ["material", "fit", "pattern", "baleGrade"].forEach((field) => {
+    if (query[field]) filter[`attributes.${field}`] = query[field];
   });
 
   if (query.minPrice || query.maxPrice) {
     filter.price = {};
-    if (query.minPrice) filter.price.$gte = Number(query.minPrice);
-    if (query.maxPrice) filter.price.$lte = Number(query.maxPrice);
+    if (query.minPrice) filter.price.$gte = Math.round(Number(query.minPrice) * 100);
+    if (query.maxPrice) filter.price.$lte = Math.round(Number(query.maxPrice) * 100);
   }
 
   let ownShopId = "";
@@ -490,6 +498,10 @@ const stableQuery = (query) => Object.keys(query)
 
 const explicitSort = (listings, sort) => {
   const results = [...listings];
+  if (sort === "newest") {
+    return results.sort((left, right) =>
+      new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
+  }
   if (sort === "price_asc") return results.sort((left, right) => left.price - right.price);
   if (sort === "price_desc") return results.sort((left, right) => right.price - left.price);
   if (sort === "popular") return results.sort((left, right) => (right.views || 0) - (left.views || 0));
@@ -520,7 +532,7 @@ const buildRecommendationFeed = async ({ query, userId }) => {
     allocations: { new: 0, promoted: 0, suggested: 0 },
     candidateLimit: RECOMMENDATION_FEED.CANDIDATE_LIMIT,
     pageSize: RECOMMENDATION_FEED.PAGE_SIZE,
-    personalized: Boolean(userId),
+    personalized: !directSort && Boolean(userId),
     promotedGap: 0,
     requestedPromotedGap: RECOMMENDATION_FEED.PROMOTED_REQUESTED_GAP,
   };
@@ -736,6 +748,7 @@ module.exports = {
   buildSuggestedFeed,
   dwellPoints,
   ensureShadowProfile,
+  explicitSort,
   scoreFinspo,
   scoreListing,
 };

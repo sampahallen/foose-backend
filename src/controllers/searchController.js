@@ -3,11 +3,14 @@ const DigiShop = require("../models/DigiShop");
 const Listing = require("../models/Listing");
 const Order = require("../models/Order");
 const SearchLog = require("../models/SearchLog");
+const ShadowProfile = require("../models/ShadowProfile");
 const asyncHandler = require("../utils/asyncHandler");
 const { success } = require("../utils/apiResponse");
 const { withCache } = require("../utils/cache");
 const { appendQueryClause, incompleteLocationQuery, locationLabel } = require("../utils/location");
+const { applyCategoryFilter } = require("../utils/listingTaxonomy");
 const { listingLocationClause } = require("../services/locationService");
+const { ensureShadowProfile, scoreListing } = require("../services/recommendationService");
 const {
   shouldLogUnifiedSearch,
   unifiedSearch,
@@ -108,7 +111,7 @@ const queryHash = (query) => {
     .digest("hex");
 };
 
-const listingSearchData = async (query, baseFilter = {}) => {
+const listingSearchData = async (query, baseFilter = {}, userId) => {
   const page = Math.max(Number(query.page || 1), 1);
   const limit = Math.min(Math.max(Number(query.limit || 20), 1), 100);
   const filter = { status: "active", visibility: { $ne: "event" }, ...baseFilter };
@@ -120,21 +123,26 @@ const listingSearchData = async (query, baseFilter = {}) => {
       { title: pattern },
       { brand: pattern },
       { category: pattern },
+      { subcategory: pattern },
       { description: pattern },
       { hashtags: pattern },
     ];
   }
 
-  ["category", "type", "condition", "color", "gender", "size", "brand"].forEach(
+  applyCategoryFilter(filter, query.category, query.subcategory);
+  ["type", "condition", "color", "gender", "size", "brand"].forEach(
     (field) => {
       if (query[field]) filter[field] = query[field];
     },
   );
+  ["material", "fit", "pattern", "baleGrade"].forEach((field) => {
+    if (query[field]) filter[`attributes.${field}`] = query[field];
+  });
 
   if (query.minPrice || query.maxPrice) {
     filter.price = {};
-    if (query.minPrice) filter.price.$gte = Number(query.minPrice);
-    if (query.maxPrice) filter.price.$lte = Number(query.maxPrice);
+    if (query.minPrice) filter.price.$gte = Math.round(Number(query.minPrice) * 100);
+    if (query.maxPrice) filter.price.$lte = Math.round(Number(query.maxPrice) * 100);
   }
 
   const locationOptionsFilter = { ...filter };
@@ -150,14 +158,38 @@ const listingSearchData = async (query, baseFilter = {}) => {
     popular: { views: -1 },
   };
   const sort = sortOptions[query.sort] || sortOptions.newest;
+  const relevanceRequested = query.sort === "relevance";
+
+  if (relevanceRequested) {
+    if (userId) await ensureShadowProfile(userId);
+    const [profile, candidates, locations] = await Promise.all([
+      userId ? ShadowProfile.findOne({ userId }).lean() : Promise.resolve(null),
+      Listing.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .populate("shopId", SHOP_LISTING_FIELDS)
+        .lean(),
+      listingLocationOptions(locationOptionsFilter),
+    ]);
+    const ordered = candidates
+      .map((listing) => ({ listing, score: scoreListing(profile, listing) }))
+      .sort((left, right) =>
+        right.score - left.score ||
+        new Date(right.listing.createdAt || 0) - new Date(left.listing.createdAt || 0))
+      .map(({ listing }) => listing);
+    const start = (page - 1) * limit;
+    return {
+      results: ordered.slice(start, start + limit),
+      total: ordered.length,
+      page,
+      pages: Math.ceil(ordered.length / limit),
+      filters: { locations },
+    };
+  }
 
   const [results, total, locations] = await Promise.all([
-    Listing.find(filter)
-      .sort(sort)
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .populate("shopId", SHOP_LISTING_FIELDS)
-      .lean(),
+    Listing.find(filter).sort(sort).skip((page - 1) * limit).limit(limit)
+      .populate("shopId", SHOP_LISTING_FIELDS).lean(),
     Listing.countDocuments(filter),
     listingLocationOptions(locationOptionsFilter),
   ]);
@@ -175,10 +207,12 @@ const listingSearchData = async (query, baseFilter = {}) => {
 
 exports.searchListings = asyncHandler(async (req, res) => {
   const ownShopId = await ownShopIdFor(req.user?.id);
-  const cacheKey = `search:${queryHash(req.query)}:${ownShopId || "public"}`;
+  const relevanceOwner = req.query.sort === "relevance" ? req.user?.id || "guest" : "shared";
+  const cacheKey = `search:${queryHash(req.query)}:${ownShopId || "public"}:${relevanceOwner}`;
   const data = await withCache(cacheKey, 60, () => listingSearchData(
     req.query,
     ownShopId ? { shopId: { $ne: ownShopId } } : {},
+    req.user?.id,
   ));
 
   return success(res, data);
@@ -186,7 +220,7 @@ exports.searchListings = asyncHandler(async (req, res) => {
 
 exports.searchUnified = asyncHandler(async (req, res) => {
   const { cursor, limit = 50, q, scope = "all", tag, track } = req.validated?.query || req.query;
-  const data = await unifiedSearch({ cursor, excludeOwnerId: req.user?.id, limit, q, scope, tag });
+  const data = await unifiedSearch({ cursor, limit, q, scope, tag });
 
   if (shouldLogUnifiedSearch({ cursor, scope, track })) {
     logSearchTerm(tag ? `#${data.query}` : q);
@@ -197,20 +231,27 @@ exports.searchUnified = asyncHandler(async (req, res) => {
 
 exports.getUnifiedSuggestions = asyncHandler(async (req, res) => {
   const query = req.validated?.query || req.query;
-  const data = await unifiedSuggestions(query, { excludeOwnerId: req.user?.id });
+  const data = await unifiedSuggestions(query, {
+    excludeOwnerId: query.scope === "items" ? req.user?.id : undefined,
+  });
   return success(res, data, "Search suggestions loaded");
 });
 
 exports.getTopPicks = asyncHandler(async (req, res) => {
   const ownShopId = await ownShopIdFor(req.user?.id);
-  const cacheKey = `search:top-picks:${queryHash(req.query)}:${ownShopId || "public"}`;
+  const relevanceOwner = req.query.sort === "relevance" ? req.user?.id || "guest" : "shared";
+  const cacheKey = `search:top-picks:${queryHash(req.query)}:${ownShopId || "public"}:${relevanceOwner}`;
   const now = new Date();
   const data = await withCache(cacheKey, 120, () =>
-    listingSearchData(req.query, {
-      promotionTags: TOP_PICK_TAG,
-      promotionExpiresAt: { $gt: now },
-      ...(ownShopId ? { shopId: { $ne: ownShopId } } : {}),
-    }),
+    listingSearchData(
+      req.query,
+      {
+        promotionTags: TOP_PICK_TAG,
+        promotionExpiresAt: { $gt: now },
+        ...(ownShopId ? { shopId: { $ne: ownShopId } } : {}),
+      },
+      req.user?.id,
+    ),
   );
 
   return success(res, data, "Top picks loaded");

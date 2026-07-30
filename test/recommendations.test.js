@@ -13,6 +13,7 @@ const {
 const {
   awardFinspoSignal,
   dwellPoints,
+  explicitSort,
   scoreFinspo,
   scoreListing,
 } = require("../src/services/recommendationService");
@@ -28,6 +29,15 @@ const {
 const { normalizeHashtags } = require("../src/utils/hashtags");
 
 const items = (prefix, count) => Array.from({ length: count }, (_, index) => ({ _id: `${prefix}-${index}` }));
+
+test("explicit listing sorts keep relevance personalized and newest strictly fresh", () => {
+  const listings = [
+    { _id: "older", createdAt: "2026-01-01T00:00:00.000Z", price: 100 },
+    { _id: "newer", createdAt: "2026-02-01T00:00:00.000Z", price: 200 },
+  ];
+  assert.equal(explicitSort(listings, "relevance"), null);
+  assert.deepEqual(explicitSort(listings, "newest").map((listing) => listing._id), ["newer", "older"]);
+});
 
 test("recommendation signal presets match the product rules", () => {
   assert.equal(RECOMMENDATION_POINTS[RECOMMENDATION_SIGNALS.PURCHASE], 50);

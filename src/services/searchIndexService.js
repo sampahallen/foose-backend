@@ -81,7 +81,7 @@ const commonDocument = ({
   const normalizedHashtags = normalizeHashtags(hashtags);
   const normalizedKeywords = compactStrings(keywords || []);
   const shopName = shop?.shopName || "";
-  const values = [primaryText, username, shopName, normalizedHashtags, normalizedKeywords];
+  const values = [primaryText, bodyText, username, shopName, normalizedHashtags, normalizedKeywords];
 
   return {
     sourceType,
@@ -116,7 +116,7 @@ const mapListingSearchDocument = ({ listing, owner, shop }) => {
   return commonDocument({
     bodyText: listing.description,
     hashtags: listing.hashtags,
-    keywords: [listing.brand, listing.category, listing.type],
+    keywords: [listing.brand, listing.category, listing.subcategory, listing.type],
     ownerId: owner._id,
     primaryText: listing.title,
     publishedAt: listing.createdAt,
@@ -477,7 +477,7 @@ const rebuildSearchIndex = async () => {
     [
       "items",
       Listing.find({}).select(
-        "_id shopId title description hashtags brand category type status visibility createdAt updatedAt",
+        "_id shopId title description hashtags brand category subcategory type status visibility createdAt updatedAt",
       ),
       mapListingBatch,
     ],

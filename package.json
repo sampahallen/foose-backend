@@ -13,6 +13,7 @@
     "hashtags:rebuild": "node scripts/rebuildHashtags.js",
     "search:rebuild": "node scripts/rebuildSearch.js",
     "locations:backfill": "node scripts/backfillLocations.js",
+    "listings:taxonomy:migrate": "node scripts/migrateListingTaxonomy.js",
     "orders:lifecycle:migrate": "node scripts/migrateOrderLifecycle.js",
     "test": "node --test"
   },

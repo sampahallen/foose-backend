@@ -12,6 +12,13 @@ const {
   syncListingSearchDocument,
 } = require("../services/searchIndexService");
 const { ensureShopLocationFromOwner, listingLocationClause } = require("../services/locationService");
+const {
+  applyCategoryFilter,
+  isSupportedCategory,
+  normalizeCategoryFields,
+  normalizeCategorySelection,
+  parseAttributes,
+} = require("../utils/listingTaxonomy");
 
 const pageOptions = (query) => {
   const page = Math.max(Number(query.page || 1), 1);
@@ -83,6 +90,13 @@ const listingInput = (req, currentListing) => {
   const volumeDiscounts = parseVolumeDiscounts(req.body.volumeDiscounts);
   if (volumeDiscounts) input.volumeDiscounts = volumeDiscounts;
   if (req.body.hashtags !== undefined) input.hashtags = normalizeHashtags(req.body.hashtags);
+  if (req.body.attributes !== undefined) {
+    try {
+      input.attributes = parseAttributes(req.body.attributes);
+    } catch (error) {
+      throw httpError(422, error.message);
+    }
+  }
   if (currentListing) {
     const keptImagesTouched = req.body.keptImagesTouched !== undefined;
     const keptImages = parseImageList(req.body.keptImages);
@@ -94,7 +108,53 @@ const listingInput = (req, currentListing) => {
     input.images = req.fileUrls;
   }
 
-  return normalizeListingTypeFields(input, currentListing);
+  normalizeListingTypeFields(input, currentListing);
+
+  const rawCategory = String(input.category ?? currentListing?.category ?? "").trim();
+  const rawSubcategory = String(
+    input.subcategory ?? (input.category !== undefined ? "" : currentListing?.subcategory) ?? "",
+  ).trim();
+  const selection = normalizeCategorySelection(rawCategory, rawSubcategory);
+  const status = input.status || currentListing?.status || "active";
+  if (rawCategory && !selection.validCategory) {
+    throw httpError(422, "Choose a supported listing category");
+  }
+  if (rawSubcategory && !selection.validSubcategory) {
+    throw httpError(422, "Choose a subcategory that belongs to the selected category");
+  }
+  if (status === "active" && !isSupportedCategory(selection.category)) {
+    throw httpError(422, "Choose a supported category before publishing this listing");
+  }
+
+  if (selection.validCategory) {
+    input.category = selection.category;
+    input.subcategory = selection.subcategory || undefined;
+  }
+  if (selection.legacyHashtag) {
+    input.hashtags = normalizeHashtags([
+      ...(input.hashtags || currentListing?.hashtags || []),
+      selection.legacyHashtag,
+    ]);
+  }
+
+  const taxonomyChanged =
+    input.category !== undefined ||
+    input.subcategory !== undefined ||
+    input.type !== undefined;
+  if (taxonomyChanged && input.attributes === undefined) {
+    input.attributes = currentListing?.attributes?.toObject?.() || currentListing?.attributes || {};
+  }
+
+  try {
+    normalizeCategoryFields(input, selection.category, {
+      replaceAttributes: req.body.attributes !== undefined || taxonomyChanged,
+      subcategory: selection.subcategory,
+      type: input.type || currentListing?.type,
+    });
+  } catch (error) {
+    throw httpError(422, error.message);
+  }
+  return input;
 };
 
 exports.listListings = asyncHandler(async (req, res) => {
@@ -106,8 +166,12 @@ exports.listListings = asyncHandler(async (req, res) => {
     if (ownShop) filter.shopId = { $ne: ownShop._id };
   }
 
-  ["category", "type", "gender", "condition", "color", "size", "brand"].forEach((field) => {
+  applyCategoryFilter(filter, req.query.category, req.query.subcategory);
+  ["type", "gender", "condition", "color", "size", "brand"].forEach((field) => {
     if (req.query[field]) filter[field] = req.query[field];
+  });
+  ["material", "fit", "pattern", "baleGrade"].forEach((field) => {
+    if (req.query[field]) filter[`attributes.${field}`] = req.query[field];
   });
   if (req.query.location) {
     const locationClause = await listingLocationClause(req.query.location);

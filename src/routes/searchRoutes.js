@@ -8,10 +8,15 @@ const router = express.Router();
 const browseSuggestionFilterNames = [
   "brand",
   "category",
+  "subcategory",
   "color",
   "condition",
   "gender",
   "location",
+  "material",
+  "fit",
+  "pattern",
+  "baleGrade",
   "maxPrice",
   "minPrice",
   "size",
@@ -23,6 +28,7 @@ const suggestionQuerySchema = z.object({
   scope: z.literal("items").optional(),
   type: z.enum(["retail", "wholesale"]).optional(),
   category: z.string().trim().min(1).max(80).optional(),
+  subcategory: z.string().trim().min(1).max(80).optional(),
   brand: z.string().trim().min(1).max(80).optional(),
   condition: z.enum(["excellent", "great", "good", "fair", "poor"]).optional(),
   color: z.string().trim().min(1).max(40).optional(),
@@ -31,6 +37,10 @@ const suggestionQuerySchema = z.object({
   minPrice: z.coerce.number().nonnegative().optional(),
   maxPrice: z.coerce.number().nonnegative().optional(),
   location: z.string().trim().min(1).max(120).optional(),
+  material: z.string().trim().min(1).max(40).optional(),
+  fit: z.string().trim().min(1).max(40).optional(),
+  pattern: z.string().trim().min(1).max(40).optional(),
+  baleGrade: z.string().trim().min(1).max(40).optional(),
 }).strict().superRefine((query, context) => {
   if (browseSuggestionFilterNames.some((field) => query[field] !== undefined) && query.scope !== "items") {
     context.addIssue({
@@ -73,7 +83,7 @@ router.get(
       body: z.any().optional(),
       params: z.object({}),
       query: z.object({
-        q: z.string().trim().min(1).max(120).optional(),
+        q: z.string().trim().min(2).max(120).optional(),
         tag: z.string().trim().min(1).max(64).optional(),
         scope: z.enum(["all", "items", "finspo", "events", "users"]).optional(),
         limit: z.coerce.number().int().min(1).max(50).optional(),
