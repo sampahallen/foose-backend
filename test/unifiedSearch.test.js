@@ -17,6 +17,7 @@ const {
   decodeCursor,
   diversifyRows,
   encodeCursor,
+  keywordRowsForDocuments,
   prefixSearchMatch,
   searchTokens,
   shouldLogUnifiedSearch,
@@ -81,6 +82,22 @@ test("Explore search materializes descriptions and resolves partial word prefixe
   assert.deepEqual(prefixSearchMatch("Street lay"), {
     autocompleteTokens: { $all: ["street", "lay"] },
   });
+});
+
+test("Explore keyword suggestions use concise structured metadata", () => {
+  assert.deepEqual(keywordRowsForDocuments([
+    { keywords: ["Clothing", "Greater Accra", "retail"] },
+    { keywords: ["clothing", "A very long shop biography that should never become a keyword suggestion because it is prose"] },
+    { keywords: ["Traditional Wear"] },
+  ], "clo"), [
+    { count: 2, value: "clothing" },
+  ]);
+  assert.deepEqual(keywordRowsForDocuments([
+    { keywords: ["Greater Accra", "Accra"] },
+  ], "acc"), [
+    { count: 1, value: "accra" },
+    { count: 1, value: "greater accra" },
+  ]);
 });
 
 test("event visibility uses the explicit end or the end of its calendar day", () => {

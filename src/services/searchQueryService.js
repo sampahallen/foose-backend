@@ -554,12 +554,17 @@ const entitySuggestion = ({ entity, type }) => {
   };
 };
 
-const interleaveSuggestions = (entities, hashtags, limit) => {
+const interleaveSuggestions = (entities, hashtags, keywords, limit) => {
   const suggestions = [];
   let entityIndex = 0;
   let hashtagIndex = 0;
-  while (suggestions.length < limit && (entityIndex < entities.length || hashtagIndex < hashtags.length)) {
+  let keywordIndex = 0;
+  while (
+    suggestions.length < limit
+    && (entityIndex < entities.length || hashtagIndex < hashtags.length || keywordIndex < keywords.length)
+  ) {
     if (entityIndex < entities.length) suggestions.push(entities[entityIndex++]);
+    if (suggestions.length < limit && keywordIndex < keywords.length) suggestions.push(keywords[keywordIndex++]);
     if (suggestions.length < limit && entityIndex < entities.length) suggestions.push(entities[entityIndex++]);
     if (suggestions.length < limit && hashtagIndex < hashtags.length) suggestions.push(hashtags[hashtagIndex++]);
   }
@@ -642,6 +647,46 @@ const normalizedWordStartsWith = (value, prefix) => {
   return normalized.startsWith(prefix) || normalized
     .split(/[^\p{L}\p{N}_-]+/gu)
     .some((word) => word.startsWith(prefix));
+};
+
+const keywordRowsForDocuments = (documents, prefix, limit = 4) => {
+  const keywords = new Map();
+  documents.forEach((document) => {
+    new Set((document.keywords || []).map(normalizeSearchText)).forEach((keyword) => {
+      if (
+        keyword.length < 2
+        || keyword.length > 48
+        || !normalizedWordStartsWith(keyword, prefix)
+      ) return;
+      keywords.set(keyword, (keywords.get(keyword) || 0) + 1);
+    });
+  });
+  return [...keywords.entries()]
+    .map(([value, count]) => ({ count, value }))
+    .sort((first, second) =>
+      Number(second.value === prefix) - Number(first.value === prefix)
+      || second.count - first.count
+      || first.value.localeCompare(second.value))
+    .slice(0, limit);
+};
+
+const visibleKeywordRows = async (prefix, limit = 4) => {
+  if (!prefix) return [];
+  const documents = await SearchDocument.find({
+    autocompleteTokens: prefix,
+    ...visibilityMatch(),
+  })
+    .sort({ publishedAt: -1, _id: 1 })
+    .limit(300)
+    .select("sourceType sourceId keywords")
+    .lean();
+  const hydrated = await hydrateSearchRows(documents);
+  const visibleKeys = new Set(hydrated.map(resultKey));
+  return keywordRowsForDocuments(
+    documents.filter((document) => visibleKeys.has(rowKey(document))),
+    prefix,
+    limit,
+  );
 };
 
 const browseDocumentMatchesPrefix = (document, prefix) => [
@@ -771,9 +816,10 @@ const unifiedSuggestions = async ({ q, limit = 10, scope, ...filters }, { exclud
   if (query.length < 2) return { suggestions: [] };
   const tagPrefix = normalizeHashtag(query);
   const entityPrefix = query.replace(/^@/, "");
-  const [documents, hashtagRows] = await Promise.all([
+  const [documents, hashtagRows, keywordRows] = await Promise.all([
     visibleEntitySuggestionDocuments(entityPrefix, 36),
     visibleHashtagRows(tagPrefix, 5),
+    visibleKeywordRows(entityPrefix, 4),
   ]);
   const ranked = documents.map((document) => ({
     ...document,
@@ -797,7 +843,30 @@ const unifiedSuggestions = async ({ q, limit = 10, scope, ...filters }, { exclud
     subtitle: "Hashtag",
     type: "hashtag",
   }));
-  return { suggestions: interleaveSuggestions(entitySuggestions, hashtagSuggestions, limit) };
+  const keywordSuggestions = [
+    {
+      href: `/search?q=${encodeURIComponent(query)}&tab=all`,
+      id: `keyword:${query}`,
+      keyword: query,
+      kind: "keyword",
+      label: query,
+      subtitle: "Search across Foose",
+      type: "keyword",
+    },
+    ...keywordRows
+      .filter((row) => row.value !== query)
+      .map((row) => ({
+        count: row.count,
+        href: `/search?q=${encodeURIComponent(row.value)}&tab=all`,
+        id: `keyword:${row.value}`,
+        keyword: row.value,
+        kind: "keyword",
+        label: row.value,
+        subtitle: `${row.count} matching ${row.count === 1 ? "result" : "results"}`,
+        type: "keyword",
+      })),
+  ];
+  return { suggestions: interleaveSuggestions(entitySuggestions, hashtagSuggestions, keywordSuggestions, limit) };
 };
 
 module.exports = {
@@ -810,6 +879,7 @@ module.exports = {
   diversifyRows,
   encodeCursor,
   hydrateSearchRows,
+  keywordRowsForDocuments,
   shouldLogUnifiedSearch,
   prefixSearchMatch,
   searchTokens,
@@ -818,6 +888,7 @@ module.exports = {
   unifiedSuggestions,
   visibleEntitySuggestionDocuments,
   visibleHashtagRows,
+  visibleKeywordRows,
   visiblePrefixLength,
   textSearchExpression,
   termSuggestionsFor,
