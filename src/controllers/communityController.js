@@ -521,6 +521,10 @@ exports.getGalleryPost = asyncHandler(async (req, res) => {
     throw httpError(404, "Gallery post not found");
   }
 
+  if (!post.isArchived) {
+    void GalleryPost.updateOne({ _id: post._id }, { $inc: { views: 1 } }).catch(() => undefined);
+  }
+
   const serializedPost = post.isArchived
     ? {
         ...post,

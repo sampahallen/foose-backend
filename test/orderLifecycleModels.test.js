@@ -23,7 +23,7 @@ const objectId = () => new mongoose.Types.ObjectId();
 
 const orderInput = (overrides = {}) => ({
   buyerId: objectId(),
-  delivery: { method: "pickup" },
+  delivery: { method: "shop_pickup" },
   escrowStatus: "not_held",
   items: [
     {

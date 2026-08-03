@@ -184,7 +184,7 @@ if (!mongoTestUri) {
       const order = await createHeldOrder({
         amount,
         buyerId: buyer._id,
-        delivery: { fee: 0, method: "pickup" },
+        delivery: { fee: 0, method: "shop_pickup" },
         fulfillmentStatus: "ready_for_pickup",
         settlementSellerId: pinnedSeller._id,
         shopId: shop._id,
@@ -267,14 +267,11 @@ if (!mongoTestUri) {
         amount,
         buyerId: buyer._id,
         delivery: {
+          company: "Intercity STC",
           fee: 0,
-          method: "delivery",
+          method: "station_pickup",
           transit: {
-            busNumber: "GT 1234-26",
-            driverPhone: "+233200000001",
-            lastStopLocation: "Kumasi terminal",
-            parcelNumber: "PKG-TEST-1",
-            serviceName: "Foose Test Transit",
+            cargoTrackingNumber: "",
           },
         },
         fulfillmentStatus: "in_transit",

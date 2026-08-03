@@ -18,7 +18,7 @@ const order = (overrides = {}) => ({
   _id: "order-1",
   activeReportId: null,
   buyerId,
-  delivery: { method: "pickup" },
+  delivery: { method: "shop_pickup" },
   fulfillmentStatus: "awaiting_seller",
   settlementStatus: "cash_due",
   shopId: { ownerId: sellerId },
@@ -70,7 +70,7 @@ test("online pickup confirmation and reporting close exactly at 72 hours", () =>
 test("delivery buyer actions close and system settlement becomes next at exactly 36 hours", () => {
   const deliveryReleaseAt = new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS);
   const sent = order({
-    delivery: { method: "delivery" },
+    delivery: { method: "station_pickup" },
     deliveryReleaseAt,
     fulfillmentStatus: "in_transit",
     settlementStatus: "held",
@@ -87,7 +87,7 @@ test("delivery buyer actions close and system settlement becomes next at exactly
 test("seller can still dispatch after 72 hours until the buyer closes first", () => {
   const sellerActionDeadline = new Date(now.getTime() + SELLER_ACTION_WINDOW_MS);
   const awaiting = order({
-    delivery: { method: "delivery" },
+    delivery: { method: "station_pickup" },
     sellerActionDeadline,
     settlementStatus: "held",
   });
@@ -122,7 +122,7 @@ test("unpaid online orders wait on the buyer and serialize recipient compatibili
         region: "Ashanti",
         town: "Kumasi",
       },
-      method: "delivery",
+      method: "station_pickup",
     },
     settlementStatus: "payment_pending",
   });

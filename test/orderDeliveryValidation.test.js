@@ -11,10 +11,12 @@ const invokeForError = (controller, req) => new Promise((resolve, reject) => {
   });
 });
 
-test("standard delivery rejects an order without a street address", async () => {
+test("station pickup rejects an order without a destination", async () => {
   const error = await invokeForError(orderController.placeOrder, {
     body: {
-      delivery: { address: { region: "Greater Accra" }, method: "delivery" },
+      deliveryByShop: {
+        "shop-1": { address: { region: "Greater Accra" }, method: "station_pickup" },
+      },
       items: [{ listingId: "listing-1", quantity: 1 }],
       paymentMethod: "paystack",
     },
@@ -22,7 +24,7 @@ test("standard delivery rejects an order without a street address", async () => 
   });
 
   assert.equal(error.statusCode, 422);
-  assert.equal(error.message, "Street address is required for standard delivery");
+  assert.equal(error.message, "Destination details are required for this delivery method");
 });
 
 test("a seller cannot create an order for their own listing", async () => {
@@ -45,7 +47,7 @@ test("a seller cannot create an order for their own listing", async () => {
   try {
     const error = await invokeForError(orderController.placeOrder, {
       body: {
-        delivery: { method: "pickup" },
+        deliveryByShop: { "shop-1": { method: "shop_pickup" } },
         items: [{ listingId: "listing-1", quantity: 1 }],
         paymentMethod: "cash_on_pickup",
       },
@@ -68,9 +70,10 @@ test("checkout idempotency keys reject a different canonical request", async () 
       {
         _id: "existing-order",
         checkoutRequestHash: "a".repeat(64),
-        delivery: { method: "pickup" },
+        delivery: { method: "shop_pickup" },
         items: [{ listingId: "listing-1", quantity: 1 }],
         paymentMethod: "cash_on_pickup",
+        shopId: "shop-1",
       },
     ],
     select() {
@@ -81,7 +84,7 @@ test("checkout idempotency keys reject a different canonical request", async () 
   try {
     const error = await invokeForError(orderController.placeOrder, {
       body: {
-        delivery: { method: "pickup" },
+        deliveryByShop: { "shop-1": { method: "shop_pickup" } },
         items: [{ listingId: "listing-2", quantity: 1 }],
         paymentMethod: "cash_on_pickup",
       },

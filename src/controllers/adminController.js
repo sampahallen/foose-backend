@@ -1,9 +1,10 @@
 const DigiShop = require("../models/DigiShop");
+const FinspoComment = require("../models/FinspoComment");
+const GalleryPost = require("../models/GalleryPost");
 const KYC = require("../models/KYC");
 const Listing = require("../models/Listing");
 const Order = require("../models/Order");
 const OrderReport = require("../models/OrderReport");
-const SiteAnalyticsEvent = require("../models/SiteAnalyticsEvent");
 const User = require("../models/User");
 const mongoose = require("mongoose");
 const asyncHandler = require("../utils/asyncHandler");
@@ -70,6 +71,23 @@ function normalizeBucket(rows, key, fallback = "Unknown") {
     count: row.count,
     [key]: row._id || fallback,
   }));
+}
+
+// Merges several independently date-grouped aggregation results (e.g. orders created vs.
+// orders completed, grouped on different date fields) into one zero-filled daily series.
+function mergeDailySeries(days, series) {
+  const maps = series.map(({ rows }) => new Map(rows.map((row) => [row._id, row.count])));
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (days - index - 1));
+    date.setUTCHours(0, 0, 0, 0);
+    const key = date.toISOString().slice(0, 10);
+    const point = { date: key };
+    series.forEach(({ key: seriesKey }, seriesIndex) => {
+      point[seriesKey] = maps[seriesIndex].get(key) || 0;
+    });
+    return point;
+  });
 }
 
 exports.stats = asyncHandler(async (req, res) => {
@@ -214,104 +232,103 @@ exports.stats = asyncHandler(async (req, res) => {
 exports.analytics = asyncHandler(async (req, res) => {
   const days = [7, 14, 30].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
   const since = analyticsSince(days);
-  const errorTypes = ["js_error", "unhandled_rejection", "api_failure", "resource_error"];
 
-  const [timeline, byType, bySource, bySeverity, recentErrors, totals] = await Promise.all([
-    SiteAnalyticsEvent.aggregate([
-      { $match: { createdAt: { $gte: since } } },
-      {
-        $project: {
-          bucket: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } },
-          type: 1,
-          severity: 1,
-        },
-      },
-      {
-        $group: {
-          _id: "$bucket",
-          apiFailures: { $sum: { $cond: [{ $eq: ["$type", "api_failure"] }, 1, 0] } },
-          clientErrors: {
-            $sum: {
-              $cond: [{ $in: ["$type", ["js_error", "unhandled_rejection", "resource_error"]] }, 1, 0],
-            },
-          },
-          critical: { $sum: { $cond: [{ $eq: ["$severity", "critical"] }, 1, 0] } },
-          events: { $sum: 1 },
-          pageViews: { $sum: { $cond: [{ $eq: ["$type", "page_view"] }, 1, 0] } },
-        },
-      },
-      { $sort: { _id: 1 } },
+  const [
+    ordersCreated,
+    ordersCompleted,
+    revenueAgg,
+    orderCreatedTrendRows,
+    orderCompletedTrendRows,
+    outcomeBreakdownRows,
+    finspoPostsCreated,
+    finspoComments,
+    finspoTotalsAgg,
+    finspoPostsTrendRows,
+    finspoCommentsTrendRows,
+    topPosts,
+  ] = await Promise.all([
+    Order.countDocuments({ createdAt: { $gte: since } }),
+    Order.countDocuments({ completedAt: { $gte: since } }),
+    Order.aggregate([
+      { $match: { completedAt: { $gte: since } } },
+      { $group: { _id: null, total: { $sum: "$totalAmount" } } },
     ]),
-    SiteAnalyticsEvent.aggregate([
+    Order.aggregate([
       { $match: { createdAt: { $gte: since } } },
-      { $group: { _id: "$type", count: { $sum: 1 } } },
+      { $group: { _id: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }, count: { $sum: 1 } } },
+    ]),
+    Order.aggregate([
+      { $match: { completedAt: { $gte: since } } },
+      { $group: { _id: { $dateToString: { date: "$completedAt", format: "%Y-%m-%d" } }, count: { $sum: 1 } } },
+    ]),
+    Order.aggregate([
+      { $match: { createdAt: { $gte: since } } },
+      { $project: { outcome: { $cond: [{ $eq: ["$status", "disputed"] }, "disputed", "$fulfillmentStatus"] } } },
+      { $group: { _id: "$outcome", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
-    SiteAnalyticsEvent.aggregate([
-      { $match: { createdAt: { $gte: since } } },
-      { $group: { _id: "$source", count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
+    GalleryPost.countDocuments({ createdAt: { $gte: since }, isArchived: false }),
+    FinspoComment.countDocuments({ createdAt: { $gte: since } }),
+    GalleryPost.aggregate([
+      { $match: { isArchived: false } },
+      { $group: { _id: null, totalLikes: { $sum: { $size: "$likes" } }, totalViews: { $sum: "$views" } } },
     ]),
-    SiteAnalyticsEvent.aggregate([
-      { $match: { createdAt: { $gte: since } } },
-      { $group: { _id: "$severity", count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
+    GalleryPost.aggregate([
+      { $match: { isArchived: false, createdAt: { $gte: since } } },
+      { $group: { _id: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }, count: { $sum: 1 } } },
     ]),
-    SiteAnalyticsEvent.find({
-      createdAt: { $gte: since },
-      $or: [{ type: { $in: errorTypes } }, { severity: { $in: ["error", "critical"] } }],
-    })
-      .sort({ createdAt: -1 })
+    FinspoComment.aggregate([
+      { $match: { createdAt: { $gte: since } } },
+      { $group: { _id: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }, count: { $sum: 1 } } },
+    ]),
+    GalleryPost.find({ isArchived: false })
+      .sort({ views: -1, createdAt: -1 })
       .limit(10)
-      .select("createdAt endpoint message method path severity source statusCode type url")
+      .select("caption imageUrl userId views likes commentCount createdAt")
+      .populate("userId", "name username")
       .lean(),
-    SiteAnalyticsEvent.aggregate([
-      { $match: { createdAt: { $gte: since } } },
-      {
-        $group: {
-          _id: null,
-          apiFailures: { $sum: { $cond: [{ $eq: ["$type", "api_failure"] }, 1, 0] } },
-          clientErrors: {
-            $sum: {
-              $cond: [{ $in: ["$type", ["js_error", "unhandled_rejection", "resource_error"]] }, 1, 0],
-            },
-          },
-          critical: { $sum: { $cond: [{ $eq: ["$severity", "critical"] }, 1, 0] } },
-          events: { $sum: 1 },
-          pageViews: { $sum: { $cond: [{ $eq: ["$type", "page_view"] }, 1, 0] } },
-        },
-      },
-    ]),
   ]);
 
-  const summary = totals[0] || {
-    apiFailures: 0,
-    clientErrors: 0,
-    critical: 0,
-    events: 0,
-    pageViews: 0,
-  };
+  const revenue = revenueAgg[0]?.total || 0;
+  const finspoTotals = finspoTotalsAgg[0] || { totalLikes: 0, totalViews: 0 };
 
   return success(
     res,
     {
-      bySeverity: bySeverity.map((item) => ({ count: item.count, severity: item._id || "unknown" })),
-      bySource: bySource.map((item) => ({ count: item.count, source: item._id || "unknown" })),
-      byType: byType.map((item) => ({ count: item.count, type: item._id || "unknown" })),
       days,
-      recentErrors,
-      summary: {
-        ...summary,
-        failureRate: summary.pageViews ? Number(((summary.apiFailures + summary.clientErrors) / summary.pageViews).toFixed(4)) : 0,
+      finspo: {
+        comments: finspoComments,
+        postsCreated: finspoPostsCreated,
+        topPosts: topPosts.map((post) => ({
+          _id: post._id,
+          author: post.userId && typeof post.userId === "object"
+            ? { name: post.userId.name, username: post.userId.username }
+            : { name: "Unknown seller", username: "" },
+          caption: post.caption || "",
+          commentCount: post.commentCount || 0,
+          createdAt: post.createdAt,
+          imageUrl: post.imageUrl,
+          likes: post.likes?.length || 0,
+          views: post.views || 0,
+        })),
+        totalLikes: finspoTotals.totalLikes,
+        totalViews: finspoTotals.totalViews,
+        trend: mergeDailySeries(days, [
+          { key: "posts", rows: finspoPostsTrendRows },
+          { key: "comments", rows: finspoCommentsTrendRows },
+        ]),
       },
-      timeline: timeline.map((item) => ({
-        apiFailures: item.apiFailures,
-        clientErrors: item.clientErrors,
-        critical: item.critical,
-        date: item._id,
-        events: item.events,
-        pageViews: item.pageViews,
-      })),
+      orders: {
+        completed: ordersCompleted,
+        completionRate: ordersCreated ? Number((ordersCompleted / ordersCreated).toFixed(4)) : 0,
+        created: ordersCreated,
+        outcomeBreakdown: normalizeBucket(outcomeBreakdownRows, "outcome"),
+        revenue,
+        trend: mergeDailySeries(days, [
+          { key: "created", rows: orderCreatedTrendRows },
+          { key: "completed", rows: orderCompletedTrendRows },
+        ]),
+      },
     },
     "Analytics loaded",
   );

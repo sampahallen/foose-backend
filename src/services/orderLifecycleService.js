@@ -576,7 +576,7 @@ const cancelCashPickup = async ({
     const current = await Order.findOne({
       _id: orderId,
       buyerId: userId,
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "awaiting_seller",
       settlementStatus: "cash_due",
     }).session(session);
@@ -639,7 +639,7 @@ const markPickupReady = ({
     eventType: "pickup_ready",
     filter: {
       _id: orderId,
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "awaiting_seller",
       settlementStatus: { $in: ["cash_due", "held"] },
     },
@@ -673,7 +673,7 @@ const completeCashPickup = ({
     eventType: "cash_pickup_completed",
     filter: {
       _id: orderId,
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "ready_for_pickup",
       settlementStatus: "cash_due",
     },
@@ -719,7 +719,7 @@ const releaseUnclaimedPickup = async ({
     }
     const current = await Order.findOne({
       _id: orderId,
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "ready_for_pickup",
       pickupExpiresAt: { $lte: now },
       settlementStatus: "cash_due",
@@ -1416,7 +1416,7 @@ const confirmCollection = async ({
     eventType: "confirm_collection",
     filter: {
       _id: orderId,
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "ready_for_pickup",
       pickupExpiresAt: { $gt: now },
     },
@@ -1428,21 +1428,21 @@ const confirmCollection = async ({
 
 const dispatchOrder = ({
   billImage,
+  cargoTrackingNumber,
   idempotencyKey,
   now = new Date(),
   orderId,
-  transit,
   userId,
 }) =>
   simpleTransition({
     action: "dispatch",
     actorId: userId,
-    eventMessage: "Seller submitted transit details and marked the parcel sent.",
+    eventMessage: "Seller uploaded the waybill and marked the parcel sent.",
     eventType: "delivery_dispatched",
     filter: {
       _id: orderId,
       activeReportId: null,
-      "delivery.method": "delivery",
+      "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
       fulfillmentStatus: "awaiting_seller",
       settlementStatus: "held",
     },
@@ -1454,11 +1454,7 @@ const dispatchOrder = ({
         deliveryReleaseAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
         "delivery.transit": {
           billImage,
-          busNumber: transit.busNumber,
-          driverPhone: transit.driverPhone,
-          lastStopLocation: transit.lastStopLocation,
-          parcelNumber: transit.parcelNumber || "",
-          serviceName: transit.serviceName,
+          cargoTrackingNumber: cargoTrackingNumber || "",
         },
         fulfillmentStatus: "in_transit",
         sellerAction: "shipped",
@@ -1528,7 +1524,7 @@ const confirmReceipt = async ({
     eventType: "confirm_receipt",
     filter: {
       _id: orderId,
-      "delivery.method": "delivery",
+      "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
       deliveryReleaseAt: { $gt: now },
       fulfillmentStatus: "in_transit",
     },
@@ -1568,7 +1564,7 @@ const refundExpiredPickup = ({ now = new Date(), orderId, workerToken }) =>
     eventType: "pickup_expiry",
     filter: {
       _id: orderId,
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "ready_for_pickup",
       pickupExpiresAt: { $lte: now },
       ...(workerToken ? { "workerClaim.token": workerToken } : {}),
@@ -1584,7 +1580,7 @@ const releaseExpiredDelivery = ({ now = new Date(), orderId, workerToken }) =>
     eventType: "delivery_expiry",
     filter: {
       _id: orderId,
-      "delivery.method": "delivery",
+      "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
       deliveryReleaseAt: { $lte: now },
       fulfillmentStatus: "in_transit",
       ...(workerToken ? { "workerClaim.token": workerToken } : {}),

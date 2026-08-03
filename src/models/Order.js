@@ -3,6 +3,7 @@ const {
   FULFILLMENT_STATUSES,
   ORDER_SETTLEMENT_STATUSES,
 } = require("../constants/orderLifecycle");
+const { DELIVERY_METHODS } = require("../constants/delivery");
 
 const { Schema } = mongoose;
 
@@ -303,7 +304,13 @@ const orderSchema = new Schema(
     delivery: {
       method: {
         type: String,
-        enum: ["pickup", "delivery"],
+        enum: DELIVERY_METHODS,
+      },
+      company: {
+        type: String,
+        trim: true,
+        maxlength: 160,
+        default: "",
       },
       fee: {
         type: Number,
@@ -367,6 +374,12 @@ const orderSchema = new Schema(
           default: "",
         },
         parcelNumber: {
+          type: String,
+          trim: true,
+          maxlength: 120,
+          default: "",
+        },
+        cargoTrackingNumber: {
           type: String,
           trim: true,
           maxlength: 120,

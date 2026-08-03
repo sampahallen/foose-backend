@@ -9,6 +9,7 @@ const {
   orderReportEvidence,
 } = require("../middleware/uploadMiddleware");
 const validate = require("../middleware/validateMiddleware");
+const { STATION_PICKUP_COMPANIES } = require("../constants/delivery");
 
 const router = express.Router();
 
@@ -28,27 +29,35 @@ router.post(
         .object({
           callbackUrl: z.string().url().optional(),
           checkoutIdempotencyKey: z.string().trim().min(8).max(120).optional(),
-          delivery: z
-            .object({
-              address: z
-                .object({
-                  city: z.string().optional(),
-                  region: z.string().optional(),
-                  street: z.string().optional(),
-                })
-                .optional(),
-              destination: z
-                .object({
-                  preferredTerminal: z.string().trim().max(240).optional(),
-                  recipientName: z.string().trim().min(2).max(160),
-                  recipientPhone: z.string().trim().min(7).max(40),
-                  region: z.string().trim().min(2).max(120),
-                  town: z.string().trim().min(2).max(160),
-                })
-                .optional(),
-              method: z.enum(["pickup", "delivery"]).optional(),
-            })
-            .optional(),
+          deliveryByShop: z
+            .record(
+              z.string().min(1),
+              z.object({
+                address: z
+                  .object({
+                    city: z.string().optional(),
+                    region: z.string().optional(),
+                    street: z.string().optional(),
+                  })
+                  .optional(),
+                company: z.string().trim().max(160).optional(),
+                destination: z
+                  .object({
+                    preferredTerminal: z.string().trim().max(240).optional(),
+                    recipientName: z.string().trim().min(2).max(160),
+                    recipientPhone: z.string().trim().min(7).max(40),
+                    region: z.string().trim().min(2).max(120),
+                    town: z.string().trim().min(2).max(160),
+                  })
+                  .optional(),
+                method: z
+                  .enum(["station_pickup", "shop_pickup", "airport_to_airport"])
+                  .optional(),
+              }),
+            )
+            .refine((byShop) => Object.keys(byShop).length > 0, {
+              message: "Delivery details are required for every seller in this checkout",
+            }),
           items: z
             .array(
               z.object({
@@ -64,17 +73,30 @@ router.post(
             .optional(),
         })
         .superRefine((body, context) => {
-          const method = body.delivery?.method || "delivery";
-          if (
-            method === "delivery" &&
-            !body.delivery?.destination &&
-            !body.delivery?.address?.street?.trim()
-          ) {
-            context.addIssue({
-              code: "custom",
-              message: "Street address is required for standard delivery",
-              path: ["delivery", "address", "street"],
-            });
+          for (const [shopId, entry] of Object.entries(body.deliveryByShop || {})) {
+            const method = entry.method || "station_pickup";
+            const requiresDestination = method !== "shop_pickup";
+            if (
+              requiresDestination &&
+              !entry.destination &&
+              !entry.address?.street?.trim()
+            ) {
+              context.addIssue({
+                code: "custom",
+                message: "Destination details are required for this delivery method",
+                path: ["deliveryByShop", shopId, "address", "street"],
+              });
+            }
+            if (
+              method === "station_pickup" &&
+              !STATION_PICKUP_COMPANIES.includes(entry.company)
+            ) {
+              context.addIssue({
+                code: "custom",
+                message: "Choose a valid bus transit company",
+                path: ["deliveryByShop", shopId, "company"],
+              });
+            }
           }
         }),
       params: z.object({}),
@@ -84,6 +106,18 @@ router.post(
   controller.placeOrder,
 );
 
+router.get(
+  "/checkout/delivery-options",
+  auth,
+  validate(
+    z.object({
+      body: z.object({}).optional(),
+      params: z.object({}),
+      query: z.object({ shopIds: z.string().trim().min(1) }),
+    }),
+  ),
+  controller.getCheckoutDeliveryOptions,
+);
 router.get("/", auth, controller.getOrdersByIds);
 router.get("/me/buying", auth, controller.getBuyingOrders);
 router.get("/me/selling", auth, hasShop, controller.getSellingOrders);

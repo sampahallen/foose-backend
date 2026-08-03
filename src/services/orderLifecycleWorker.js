@@ -49,12 +49,12 @@ const claimDueOrder = (now) => {
         {
           $or: [
             {
-              "delivery.method": "pickup",
+              "delivery.method": "shop_pickup",
               fulfillmentStatus: "ready_for_pickup",
               pickupExpiresAt: { $lte: now },
             },
             {
-              "delivery.method": "delivery",
+              "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
               deliveryReleaseAt: { $lte: now },
               fulfillmentStatus: "in_transit",
             },
@@ -286,7 +286,7 @@ const notifyNewlyEligibleActions = async (now) => {
       .populate("buyerId", "_id name username email")
       .limit(100),
     Order.find({
-      "delivery.method": "pickup",
+      "delivery.method": "shop_pickup",
       fulfillmentStatus: "ready_for_pickup",
       pickupExpiryNotifiedAt: null,
       pickupExpiresAt: { $lte: now },
@@ -558,7 +558,7 @@ const runLifecycleSweep = async ({ batchSize = 100, now = new Date() } = {}) => 
 
       try {
         if (
-          order.delivery?.method === "pickup" &&
+          order.delivery?.method === "shop_pickup" &&
           order.fulfillmentStatus === "ready_for_pickup"
         ) {
           await refundExpiredPickup({

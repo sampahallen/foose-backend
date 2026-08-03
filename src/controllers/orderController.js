@@ -18,7 +18,22 @@ const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { invalidate } = require("../utils/cache");
-const { estimateDeliveryFee } = require("../services/deliveryService");
+const {
+  AIRPORT_COURIER,
+  STATION_PICKUP_COMPANIES,
+} = require("../constants/delivery");
+const {
+  destinationsForOrigin: twoMExpressDestinationsForOrigin,
+  isValidDestination: isValidTwoMExpressDestination,
+} = require("../constants/twoMExpressRoutes");
+const {
+  destinationsForOrigin: intercityStcDestinationsForOrigin,
+  isValidDestination: isValidIntercityStcDestination,
+} = require("../constants/intercityStcRoutes");
+const {
+  destinationsForOrigin: vipJeounDestinationsForOrigin,
+  isValidDestination: isValidVipJeounDestination,
+} = require("../constants/vipJeounRoutes");
 const {
   initializeTransaction,
   toInlinePayment,
@@ -67,18 +82,17 @@ const parseAffectedItems = (value) => {
     .filter(Boolean);
 };
 
-const currentDestination = (req) => {
-  const delivery = req.body.delivery || {};
-  const destination = delivery.destination || {};
-  const legacyAddress = delivery.address || {};
+const resolveDestination = (req, entry = {}) => {
+  const destination = entry.destination || {};
+  const legacyAddress = entry.address || {};
 
   if (
-    delivery.method === "delivery" &&
-    !delivery.destination &&
-    delivery.address &&
+    entry.method !== "shop_pickup" &&
+    !entry.destination &&
+    entry.address &&
     !asTrimmed(legacyAddress.street)
   ) {
-    throw httpError(422, "Street address is required for standard delivery");
+    throw httpError(422, "Destination details are required for this delivery method");
   }
 
   return {
@@ -117,12 +131,7 @@ const normalizedCheckoutDestination = (destination = {}) => ({
   town: asTrimmed(destination.town, 160),
 });
 
-const checkoutRequestHashFor = ({
-  deliveryMethod,
-  destination,
-  items,
-  paymentMethod,
-}) => {
+const checkoutRequestHashFor = ({ deliveryByShop, items, paymentMethod }) => {
   const quantities = new Map();
   for (const item of items || []) {
     const listingId = String(
@@ -134,12 +143,21 @@ const checkoutRequestHashFor = ({
       (quantities.get(listingId) || 0) + Number(item.quantity || 1),
     );
   }
+  const normalizedDeliveryByShop = Object.entries(deliveryByShop || {})
+    .map(([shopId, entry]) => [
+      String(shopId).toLowerCase(),
+      {
+        company: entry?.company || null,
+        destination:
+          entry?.method !== "shop_pickup"
+            ? normalizedCheckoutDestination(entry?.destination)
+            : null,
+        method: entry?.method || null,
+      },
+    ])
+    .sort(([left], [right]) => left.localeCompare(right));
   const canonical = {
-    deliveryMethod,
-    destination:
-      deliveryMethod === "delivery"
-        ? normalizedCheckoutDestination(destination)
-        : null,
+    deliveryByShop: normalizedDeliveryByShop,
     items: [...quantities.entries()]
       .map(([listingId, quantity]) => ({ listingId, quantity }))
       .sort((left, right) => left.listingId.localeCompare(right.listingId)),
@@ -436,19 +454,98 @@ const initializeReservedOrders = async ({
   return { payment, providerTransaction };
 };
 
+exports.getCheckoutDeliveryOptions = asyncHandler(async (req, res) => {
+  const shopIds = String(req.query.shopIds || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => /^[a-f0-9]{24}$/i.test(id));
+  if (!shopIds.length) throw httpError(422, "At least one shopId is required");
+
+  const shops = await DigiShop.find({ _id: { $in: shopIds } }).select("shopName location");
+
+  const stopOption = (stop) => ({
+    label: stop.terminal ? `${stop.town} (${stop.terminal})` : stop.town,
+    region: stop.region,
+    terminal: stop.terminal,
+    town: stop.town,
+  });
+
+  const options = shops.map((shop) => {
+    const twoMExpressDestinations = twoMExpressDestinationsForOrigin(shop.location);
+    const intercityStcDestinations = intercityStcDestinationsForOrigin(shop.location);
+    const vipJeounDestinations = vipJeounDestinationsForOrigin(shop.location);
+    return {
+      intercityStc: {
+        destinations: intercityStcDestinations.map(stopOption),
+        eligible: intercityStcDestinations.length > 0,
+      },
+      location: { city: shop.location?.city || "", region: shop.location?.region || "" },
+      shopId: shop._id,
+      shopName: shop.shopName,
+      twoMExpress: {
+        destinations: twoMExpressDestinations.map(stopOption),
+        eligible: twoMExpressDestinations.length > 0,
+      },
+      vipJeoun: {
+        destinations: vipJeounDestinations.map(stopOption),
+        eligible: vipJeounDestinations.length > 0,
+      },
+    };
+  });
+
+  return success(res, { shops: options }, "Checkout delivery options loaded");
+});
+
 exports.placeOrder = asyncHandler(async (req, res) => {
   const requestedItems = Array.isArray(req.body.items) ? req.body.items : [];
   if (!requestedItems.length) throw httpError(422, "At least one order item is required");
 
-  const method = req.body.delivery?.method || "delivery";
+  const deliveryByShop =
+    req.body.deliveryByShop && typeof req.body.deliveryByShop === "object"
+      ? req.body.deliveryByShop
+      : {};
+  const shopEntryIds = Object.keys(deliveryByShop);
+  if (!shopEntryIds.length) {
+    throw httpError(422, "Delivery details are required for every seller in this checkout");
+  }
   const requestedPaymentMethod = req.body.paymentMethod || "paystack";
   const paymentMethod =
     requestedPaymentMethod === "paystack_mock" ? "paystack" : requestedPaymentMethod;
-  if (method === "delivery" && paymentMethod === "cash_on_pickup") {
-    throw httpError(400, "Cash on pickup is only available for pickup orders");
+
+  const resolvedDeliveryByShop = {};
+  for (const shopId of shopEntryIds) {
+    const entry = deliveryByShop[shopId] || {};
+    const method = entry.method || "station_pickup";
+    const destination = resolveDestination(req, entry);
+    if (method !== "shop_pickup") validateDestination(destination);
+
+    let company = "";
+    if (method === "station_pickup") {
+      company = asTrimmed(entry.company, 160);
+      if (!STATION_PICKUP_COMPANIES.includes(company)) {
+        throw httpError(422, "Choose a valid bus transit company");
+      }
+    } else if (method === "airport_to_airport") {
+      company = AIRPORT_COURIER;
+    }
+
+    resolvedDeliveryByShop[shopId] = {
+      address: entry.address,
+      company,
+      destination,
+      method,
+    };
   }
-  const destination = currentDestination(req);
-  if (method === "delivery") validateDestination(destination);
+
+  if (
+    paymentMethod === "cash_on_pickup" &&
+    Object.values(resolvedDeliveryByShop).some((entry) => entry.method !== "shop_pickup")
+  ) {
+    throw httpError(
+      400,
+      "Cash on pickup is only available when every seller in the cart uses shop pickup",
+    );
+  }
 
   const quantityByListing = new Map();
   for (const item of requestedItems) {
@@ -462,8 +559,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
   }
   const listingIds = [...quantityByListing.keys()];
   const checkoutRequestHash = checkoutRequestHashFor({
-    deliveryMethod: method,
-    destination,
+    deliveryByShop: resolvedDeliveryByShop,
     items: [...quantityByListing.entries()].map(([listingId, quantity]) => ({
       listingId,
       quantity,
@@ -503,14 +599,22 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       const existingRequestHash =
         persistedHashes[0] ||
         checkoutRequestHashFor({
-          deliveryMethod: existing[0].delivery?.method,
-          destination:
-            existing[0].delivery?.destination || {
-              region: existing[0].delivery?.address?.region,
-              town:
-                existing[0].delivery?.address?.city ||
-                existing[0].delivery?.address?.street,
-            },
+          deliveryByShop: Object.fromEntries(
+            existing.map((order) => [
+              String(order.shopId?._id || order.shopId),
+              {
+                company: order.delivery?.company,
+                destination:
+                  order.delivery?.destination || {
+                    region: order.delivery?.address?.region,
+                    town:
+                      order.delivery?.address?.city ||
+                      order.delivery?.address?.street,
+                  },
+                method: order.delivery?.method,
+              },
+            ]),
+          ),
           items: existing.flatMap((order) => order.items || []),
           paymentMethod: existing[0].paymentMethod,
         });
@@ -666,7 +770,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
   const listings = await Listing.find({
     _id: { $in: listingIds },
     status: "active",
-  }).populate("shopId", "ownerId shopName slug");
+  }).populate("shopId", "ownerId shopName slug location");
   if (listings.length !== listingIds.length) {
     throw httpError(400, "One or more listings are unavailable");
   }
@@ -700,6 +804,37 @@ exports.placeOrder = asyncHandler(async (req, res) => {
   });
 
   const groups = groupOrderLines(orderLines);
+  for (const group of groups) {
+    const delivery = resolvedDeliveryByShop[String(group.shop._id)];
+    if (!delivery) {
+      throw httpError(
+        422,
+        `Delivery details are missing for ${group.shop.shopName || "one of the sellers"} in this checkout`,
+      );
+    }
+    if (delivery.method === "station_pickup" && delivery.company === "2M Express") {
+      if (!isValidTwoMExpressDestination(group.shop.location, delivery.destination)) {
+        throw httpError(
+          422,
+          `2M Express does not serve this route for ${group.shop.shopName || "this seller"}`,
+        );
+      }
+    } else if (delivery.method === "station_pickup" && delivery.company === "Intercity STC") {
+      if (!isValidIntercityStcDestination(group.shop.location, delivery.destination)) {
+        throw httpError(
+          422,
+          `Intercity STC does not serve this route for ${group.shop.shopName || "this seller"}`,
+        );
+      }
+    } else if (delivery.method === "station_pickup" && delivery.company === "VIP Jeoun") {
+      if (!isValidVipJeounDestination(group.shop.location, delivery.destination)) {
+        throw httpError(
+          422,
+          `VIP Jeoun does not serve this route for ${group.shop.shopName || "this seller"}`,
+        );
+      }
+    }
+  }
   const buyer = await User.findById(req.user.id);
   if (!buyer) throw httpError(401, "Buyer account is unavailable");
   const now = new Date();
@@ -729,14 +864,12 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     }
 
     const documents = groups.map((group, groupIndex) => {
+      const delivery = resolvedDeliveryByShop[String(group.shop._id)];
       const subtotalAmount = group.lines.reduce(
         (total, line) => total + line.subtotalAmount,
         0,
       );
-      const deliveryFee = estimateDeliveryFee({
-        method,
-        region: destination.region,
-      });
+      const deliveryFee = 0;
       return {
         buyerId: req.user.id,
         checkoutAnchor: groupIndex === 0,
@@ -744,10 +877,11 @@ exports.placeOrder = asyncHandler(async (req, res) => {
         checkoutRequestHash,
         currency: [...currencies][0],
         delivery: {
-          address: req.body.delivery?.address,
-          destination: method === "delivery" ? destination : undefined,
+          address: delivery.address,
+          company: delivery.company || undefined,
+          destination: delivery.method !== "shop_pickup" ? delivery.destination : undefined,
           fee: deliveryFee,
-          method,
+          method: delivery.method,
         },
         deliveryFee,
         escrowStatus: "not_held",
@@ -861,7 +995,7 @@ const actionClausesFor = ({ buyer, now }) =>
   buyer
     ? [
         {
-          "delivery.method": "pickup",
+          "delivery.method": "shop_pickup",
           fulfillmentStatus: "awaiting_seller",
           settlementStatus: "cash_due",
         },
@@ -871,13 +1005,13 @@ const actionClausesFor = ({ buyer, now }) =>
           settlementStatus: "held",
         },
         {
-          "delivery.method": "pickup",
+          "delivery.method": "shop_pickup",
           fulfillmentStatus: "ready_for_pickup",
           pickupExpiresAt: { $gt: now },
           settlementStatus: "held",
         },
         {
-          "delivery.method": "delivery",
+          "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
           deliveryReleaseAt: { $gt: now },
           fulfillmentStatus: "in_transit",
           settlementStatus: "held",
@@ -885,17 +1019,17 @@ const actionClausesFor = ({ buyer, now }) =>
       ]
     : [
         {
-          "delivery.method": "pickup",
+          "delivery.method": "shop_pickup",
           fulfillmentStatus: "awaiting_seller",
           settlementStatus: { $in: ["cash_due", "held"] },
         },
         {
-          "delivery.method": "delivery",
+          "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
           fulfillmentStatus: "awaiting_seller",
           settlementStatus: "held",
         },
         {
-          "delivery.method": "pickup",
+          "delivery.method": "shop_pickup",
           fulfillmentStatus: "ready_for_pickup",
           settlementStatus: "cash_due",
         },
@@ -1316,30 +1450,13 @@ exports.confirmCollection = sendActionResult({
 exports.dispatch = sendActionResult({
   handler: async (req) => {
     const billImage = req.privateUploadMap?.billImage?.[0];
-    if (!billImage) throw httpError(422, "A bus bill image is required");
-    const transit = {
-      busNumber: asTrimmed(req.body.busNumber, 80),
-      driverPhone: asTrimmed(req.body.driverPhone, 40),
-      lastStopLocation: asTrimmed(req.body.lastStopLocation, 240),
-      parcelNumber: asTrimmed(req.body.parcelNumber, 120),
-      serviceName: asTrimmed(
-        req.body.transitServiceName || req.body.serviceName,
-        160,
-      ),
-    };
-    if (!transit.serviceName) throw httpError(422, "Transit service name is required");
-    if (!transit.busNumber) throw httpError(422, "Bus number is required");
-    if (!transit.lastStopLocation) {
-      throw httpError(422, "The actual last stop location is required");
-    }
-    if (!/^\+?[0-9][0-9 ()-]{6,38}$/.test(transit.driverPhone)) {
-      throw httpError(422, "Enter a valid driver phone number");
-    }
+    if (!billImage) throw httpError(422, "A waybill image is required");
+    const cargoTrackingNumber = asTrimmed(req.body.cargoTrackingNumber, 120);
     const order = await dispatchOrder({
       billImage,
+      cargoTrackingNumber,
       idempotencyKey: idempotencyKeyFor(req),
       orderId: req.params.id,
-      transit,
       userId: req.user.id,
     });
     req.committedPrivateKeys = [
@@ -1492,7 +1609,7 @@ exports.processOrder = asyncHandler(async (_req, _res) => {
 exports.markShipped = exports.dispatch;
 exports.confirmDelivery = asyncHandler(async (req, res, next) => {
   const { order } = await loadParticipantOrder(req.params.id, req.user.id);
-  if (order.delivery?.method === "pickup") {
+  if (order.delivery?.method === "shop_pickup") {
     return exports.confirmCollection(req, res, next);
   }
   return exports.confirmReceipt(req, res, next);

@@ -120,13 +120,14 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
   const isBuyer = buyerIdFor(order) === String(userId || "");
   const isSeller = ownerIdFor(order) === String(userId || "");
   const reportActive = hasActiveReport(order);
-  const method = order?.delivery?.method || "delivery";
+  const method = order?.delivery?.method || "station_pickup";
+  const isTransitMethod = ["station_pickup", "airport_to_airport"].includes(method);
   const allowedActions = [];
 
   if (!reportActive) {
     if (
       isBuyer &&
-      method === "pickup" &&
+      method === "shop_pickup" &&
       settlementStatus === "cash_due" &&
       fulfillmentStatus === "awaiting_seller"
     ) {
@@ -135,7 +136,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
 
     if (
       isSeller &&
-      method === "pickup" &&
+      method === "shop_pickup" &&
       fulfillmentStatus === "awaiting_seller" &&
       ["cash_due", "held"].includes(settlementStatus)
     ) {
@@ -144,7 +145,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
 
     if (
       isSeller &&
-      method === "pickup" &&
+      method === "shop_pickup" &&
       settlementStatus === "cash_due" &&
       fulfillmentStatus === "ready_for_pickup"
     ) {
@@ -156,7 +157,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
 
     if (
       isBuyer &&
-      method === "pickup" &&
+      method === "shop_pickup" &&
       settlementStatus === "held" &&
       fulfillmentStatus === "ready_for_pickup" &&
       isBefore(order.pickupExpiresAt, now)
@@ -166,7 +167,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
 
     if (
       isSeller &&
-      method === "delivery" &&
+      isTransitMethod &&
       settlementStatus === "held" &&
       fulfillmentStatus === "awaiting_seller"
     ) {
@@ -184,7 +185,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
 
     if (
       isBuyer &&
-      method === "delivery" &&
+      isTransitMethod &&
       settlementStatus === "held" &&
       fulfillmentStatus === "in_transit" &&
       isBefore(order.deliveryReleaseAt, now)

@@ -35,6 +35,11 @@ const galleryPostSchema = new Schema(
       default: 0,
       min: 0,
     },
+    views: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     isArchived: {
       type: Boolean,
       default: false,
