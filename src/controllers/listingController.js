@@ -26,6 +26,10 @@ const pageOptions = (query) => {
   return { page, limit, skip: (page - 1) * limit };
 };
 
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const MY_LISTINGS_SEARCH_FIELDS = ["title", "brand", "category", "subcategory", "size", "gender", "color"];
+
 const parseVolumeDiscounts = (value) => {
   if (!value) return undefined;
   if (Array.isArray(value)) return value;
@@ -260,15 +264,35 @@ exports.getMyListings = asyncHandler(async (req, res) => {
     throw httpError(403, "DigiShop required");
   }
 
-  const requestedStatus = req.validated?.query?.status ?? req.query.status;
-  const listings = await Listing.find({
-    shopId: shop._id,
-    status: requestedStatus || { $ne: "removed" },
-  })
-    .sort({ createdAt: -1 })
-    .lean();
+  const q = req.validated?.query ?? req.query;
+  const { page, limit, skip } = pageOptions(req.query);
 
-  return success(res, { listings }, "Seller listings loaded");
+  const filter = {
+    shopId: shop._id,
+    status: q.status || { $ne: "removed" },
+  };
+  if (q.type) filter.type = q.type;
+  if (q.search) {
+    const pattern = new RegExp(escapeRegex(q.search), "i");
+    filter.$or = MY_LISTINGS_SEARCH_FIELDS.map((field) => ({ [field]: pattern }));
+  }
+  if (q.dateFrom || q.dateTo) {
+    filter.createdAt = {};
+    if (q.dateFrom) filter.createdAt.$gte = new Date(`${q.dateFrom}T00:00:00.000Z`);
+    if (q.dateTo) filter.createdAt.$lte = new Date(`${q.dateTo}T23:59:59.999Z`);
+  }
+
+  const [listings, total] = await Promise.all([
+    Listing.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    Listing.countDocuments(filter),
+  ]);
+
+  return success(res, {
+    listings,
+    page,
+    pages: Math.max(1, Math.ceil(total / limit)),
+    total,
+  }, "Seller listings loaded");
 });
 
 exports.createListing = asyncHandler(async (req, res) => {

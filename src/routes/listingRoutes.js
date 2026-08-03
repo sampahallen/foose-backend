@@ -63,6 +63,12 @@ const listingBody = z.object({
 
 const myListingsQuerySchema = z.object({
   status: z.enum(["active", "sold", "draft"]).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  search: z.string().trim().max(120).optional(),
+  type: z.enum(["retail", "wholesale"]).optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
 }).strict();
 
 const availabilityQuerySchema = z.object({

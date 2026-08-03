@@ -192,6 +192,7 @@ const listingSchema = new Schema(
 );
 
 listingSchema.index({ title: "text", brand: "text", description: "text", hashtags: "text" });
+listingSchema.index({ shopId: 1, status: 1, createdAt: -1 });
 listingSchema.index({ "location.region": 1, "location.city": 1, status: 1 });
 listingSchema.index({ category: 1, subcategory: 1, type: 1, status: 1 });
 listingSchema.index({ "attributes.material": 1 });
