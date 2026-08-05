@@ -7,7 +7,7 @@ const { success } = require("../utils/apiResponse");
 const { softDeleteUser } = require("../utils/accountLifecycle");
 const { issueTokens, verifyRefreshToken } = require("../utils/generateToken");
 const { normalizePhone } = require("../utils/phone");
-const { sendEmail, sendPasswordResetEmail } = require("../services/emailService");
+const { sendEmail, sendPasswordResetEmail, renderEmailLayout } = require("../services/emailService");
 const { ensureShadowProfile } = require("../services/recommendationService");
 const {
   rebuildUserSearchDocuments,
@@ -112,12 +112,16 @@ const sendVerificationEmail = async (user) => {
     to: user.email,
     subject: "Verify your Foose account",
     text: `Click this secure link to verify your Foose email. Email verification is required for messaging, checkout, listing items, and opening a DigiShop. The link expires in 15 minutes: ${link}`,
-    html: `
-      <p>Click the secure link below to verify your Foose email.</p>
-      <p><a href="${link}">Verify email</a></p>
-      <p>Email verification is required for messaging, checkout, listing items, and opening a DigiShop.</p>
-      <p>This link expires in 15 minutes and can only be used once.</p>
-    `,
+    html: renderEmailLayout({
+      heading: "Verify your email",
+      preheader: "Verify your Foose email to unlock messaging, checkout, and selling.",
+      bodyHtml: `
+        <p>Click the button below to verify your Foose email.</p>
+        <p style="color:#5e5f5c; font-size:13px;">Email verification is required for messaging, checkout, listing items, and opening a DigiShop.</p>
+        <p style="color:#5e5f5c; font-size:13px;">This link expires in 15 minutes and can only be used once.</p>
+      `,
+      cta: { label: "Verify email", url: link },
+    }),
   });
 };
 
