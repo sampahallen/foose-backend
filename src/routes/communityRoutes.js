@@ -4,7 +4,7 @@ const controller = require("../controllers/communityController");
 const auth = require("../middleware/authMiddleware");
 const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const validate = require("../middleware/validateMiddleware");
-const { singleImage } = require("../middleware/uploadMiddleware");
+const { finspoImages, singleImage } = require("../middleware/uploadMiddleware");
 
 const router = express.Router();
 
@@ -23,6 +23,7 @@ const eventBody = z.object({
 
 const galleryBody = z.object({
   caption: z.string().optional(),
+  imageOrder: z.string().max(12000).optional(),
   tags: z.any().optional(),
 }).strict();
 
@@ -183,7 +184,7 @@ router.get("/gallery/:id", optionalAuth, controller.getGalleryPost);
 router.post(
   "/gallery",
   auth,
-  ...singleImage("gallery", "image"),
+  ...finspoImages,
   validate(
     z.object({
       body: galleryBody,
@@ -196,7 +197,7 @@ router.post(
 router.put(
   "/gallery/:id",
   auth,
-  ...singleImage("gallery", "image"),
+  ...finspoImages,
   validate(
     z.object({
       body: galleryBody,

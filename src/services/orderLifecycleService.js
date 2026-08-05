@@ -456,6 +456,36 @@ const restoreInventory = async (order, session) => {
   }
 };
 
+const resolveReportInTransaction = async ({ order, reportResolution, session }) => {
+  if (!reportResolution) return null;
+
+  const report = await OrderReport.findOneAndUpdate(
+    {
+      _id: reportResolution.reportId,
+      isActive: true,
+      orderId: order._id,
+      status: { $in: ["submitted", "under_review"] },
+    },
+    {
+      $set: {
+        isActive: false,
+        resolution: {
+          awardedTo: reportResolution.awardedTo,
+          note: reportResolution.note,
+          resolvedAt: reportResolution.resolvedAt,
+          resolverId: reportResolution.resolverId,
+        },
+        status: "resolved",
+      },
+    },
+    sessionOptions(session, { new: true, runValidators: true }),
+  );
+  if (!report) {
+    throw httpError(409, "This report changed and can no longer be resolved");
+  }
+  return report;
+};
+
 const assertSellerOwnershipInTransaction = async ({
   orderId,
   session,
@@ -1127,6 +1157,7 @@ const requestOrderRefund = async ({
   filter,
   idempotencyKey,
   now = new Date(),
+  reportResolution,
   trigger,
 }) => {
   const settlementKey = `refund:${filter._id}`;
@@ -1145,7 +1176,7 @@ const requestOrderRefund = async ({
 
     const current = await Order.findOne({
       ...filter,
-      activeReportId: null,
+      activeReportId: reportResolution?.reportId || null,
       settlementStatus: "held",
     }).session(session);
     if (!current) {
@@ -1171,7 +1202,7 @@ const requestOrderRefund = async ({
     const updated = await Order.findOneAndUpdate(
       {
         _id: current._id,
-        activeReportId: null,
+        activeReportId: reportResolution?.reportId || null,
         fulfillmentStatus: current.fulfillmentStatus,
         settlementStatus: "held",
       },
@@ -1180,12 +1211,21 @@ const requestOrderRefund = async ({
           cancelledAt: now,
           fulfillmentStatus: "cancelled",
           inventoryRestoredAt: now,
-          settlementExplanation: "A refund to the original payment method is being processed.",
+          ...(reportResolution
+            ? {
+                "reportResolution.awardedTo": reportResolution.awardedTo,
+                "reportResolution.resolvedAt": reportResolution.resolvedAt,
+              }
+            : {}),
+          settlementExplanation: reportResolution
+            ? "Foose resolved the report for the buyer. A full refund to the original payment method is being processed."
+            : "A refund to the original payment method is being processed.",
           settlementSellerId,
           settlementStatus: "refund_pending",
           status: "cancelled",
         },
         $unset: {
+          ...(reportResolution ? { activeReportId: 1 } : {}),
           autoReleaseAt: 1,
           workerClaim: 1,
           workflowDeadlineAt: 1,
@@ -1242,8 +1282,15 @@ const requestOrderRefund = async ({
       }),
       eventType: "refund_pending",
       from,
-      message: "The order was cancelled and a full Paystack refund was requested.",
+      message: reportResolution
+        ? "Foose resolved the order report for the buyer and requested a full refund."
+        : "The order was cancelled and a full Paystack refund was requested.",
       order: updated,
+      session,
+    });
+    await resolveReportInTransaction({
+      order: updated,
+      reportResolution,
       session,
     });
     return { order: updated, settlement, wasCreated: true };
@@ -1273,6 +1320,7 @@ const releaseFunds = async ({
   filter,
   idempotencyKey,
   now = new Date(),
+  reportResolution,
   trigger,
 }) => {
   const settlementKey = `release:${filter._id}`;
@@ -1284,7 +1332,7 @@ const releaseFunds = async ({
 
     const current = await Order.findOne({
       ...filter,
-      activeReportId: null,
+      activeReportId: reportResolution?.reportId || null,
       settlementStatus: "held",
     }).session(session);
     if (!current) {
@@ -1315,7 +1363,7 @@ const releaseFunds = async ({
     const updated = await Order.findOneAndUpdate(
       {
         _id: current._id,
-        activeReportId: null,
+        activeReportId: reportResolution?.reportId || null,
         fulfillmentStatus: current.fulfillmentStatus,
         settlementStatus: "held",
       },
@@ -1326,13 +1374,22 @@ const releaseFunds = async ({
           escrowStatus: "released",
           fulfillmentStatus: "completed",
           releasedAt: now,
+          ...(reportResolution
+            ? {
+                "reportResolution.awardedTo": reportResolution.awardedTo,
+                "reportResolution.resolvedAt": reportResolution.resolvedAt,
+              }
+            : {}),
           settledAt: now,
-          settlementExplanation: "The full order total was released to the seller's Foose wallet.",
+          settlementExplanation: reportResolution
+            ? "Foose resolved the report for the seller. The full order total was released to the seller's Foose wallet."
+            : "The full order total was released to the seller's Foose wallet.",
           settlementSellerId,
           settlementStatus: "released",
           status: "delivered",
         },
         $unset: {
+          ...(reportResolution ? { activeReportId: 1 } : {}),
           autoReleaseAt: 1,
           workerClaim: 1,
           workflowDeadlineAt: 1,
@@ -1389,10 +1446,17 @@ const releaseFunds = async ({
       eventType: "funds_released",
       from,
       message:
-        trigger === "delivery_expiry"
+        trigger === "report_resolution"
+          ? "Foose resolved the order report for the seller and released the protected payment."
+          : trigger === "delivery_expiry"
           ? "Funds released automatically after the 36-hour delivery window."
           : "Funds released after the buyer confirmed the order.",
       order: updated,
+      session,
+    });
+    await resolveReportInTransaction({
+      order: updated,
+      reportResolution,
       session,
     });
     return updated;
@@ -1400,6 +1464,64 @@ const releaseFunds = async ({
 
   await notifyLifecycleEvent(order, "funds_released");
   return refreshParticipantOrder(order._id);
+};
+
+const resolveOrderReport = async ({
+  awardedTo,
+  note,
+  now = new Date(),
+  orderId,
+  resolverId,
+}) => {
+  const report = await OrderReport.findOne({ orderId, isActive: true });
+  if (!report) {
+    const resolved = await OrderReport.findOne({
+      orderId,
+      isActive: false,
+      status: "resolved",
+    }).sort({ "resolution.resolvedAt": -1, _id: -1 });
+    if (!resolved) throw httpError(404, "Active order report not found");
+    if (resolved.resolution?.awardedTo !== awardedTo) {
+      throw httpError(409, "This report has already been resolved with a different decision");
+    }
+    return {
+      order: await refreshParticipantOrder(orderId),
+      report: resolved,
+    };
+  }
+
+  const reportResolution = {
+    awardedTo,
+    note,
+    reportId: report._id,
+    resolvedAt: now,
+    resolverId,
+  };
+  const common = {
+    actorId: resolverId,
+    actorType: "admin",
+    eventType: "report_resolution",
+    filter: { _id: orderId },
+    idempotencyKey: `report:${report._id}`,
+    now,
+    reportResolution,
+    trigger: "report_resolution",
+  };
+
+  if (awardedTo === "buyer") {
+    const result = await requestOrderRefund(common);
+    return {
+      order: result.order,
+      report: await OrderReport.findById(report._id),
+      settlement: result.settlement,
+    };
+  }
+
+  const order = await releaseFunds(common);
+  return {
+    order,
+    report: await OrderReport.findById(report._id),
+  };
 };
 
 const confirmCollection = async ({
@@ -2309,6 +2431,7 @@ module.exports = {
   refundExpiredPickup,
   releaseExpiredDelivery,
   releaseFunds,
+  resolveOrderReport,
   releaseUnclaimedPickup,
   requestOrderRefund,
   submitReport,

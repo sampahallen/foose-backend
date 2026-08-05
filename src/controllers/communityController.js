@@ -14,6 +14,12 @@ const {
   buildFinspoAccountSuggestions,
 } = require("../services/recommendationService");
 const { normalizeHashtags } = require("../utils/hashtags");
+const {
+  assertFinspoImageCount,
+  currentFinspoImages,
+  resolveFinspoImageOrder,
+  uploadedFinspoImages,
+} = require("../utils/finspoImages");
 const { syncFinspoHashtags } = require("../services/hashtagService");
 const {
   notifyFinspoComment,
@@ -971,14 +977,15 @@ exports.toggleFinspoCommentLike = asyncHandler(async (req, res) => {
 });
 
 exports.createGalleryPost = asyncHandler(async (req, res) => {
-  const imageUrl = req.fileUrls?.[0];
-  if (!imageUrl) throw httpError(422, "Gallery image is required");
+  const images = assertFinspoImageCount(uploadedFinspoImages(req));
+  const imageUrl = images[0];
 
   const tags = normalizeHashtags(req.body.tags);
 
   const post = await GalleryPost.create({
     userId: req.user.id,
     imageUrl,
+    images,
     caption: req.body.caption,
     tags,
   });
@@ -1008,7 +1015,25 @@ exports.updateGalleryPost = asyncHandler(async (req, res) => {
   if (req.body.tags !== undefined) {
     post.tags = normalizeHashtags(req.body.tags);
   }
-  if (req.fileUrls?.[0]) post.imageUrl = req.fileUrls[0];
+  const uploadedImages = req.fileUrlMap?.images || [];
+  const legacyImage = req.fileUrlMap?.image?.[0];
+  const currentImages = currentFinspoImages(post);
+
+  if (req.body.imageOrder !== undefined) {
+    const nextImages = resolveFinspoImageOrder({
+      currentImages,
+      imageOrder: req.body.imageOrder,
+      uploadedImages,
+    });
+    post.images = nextImages;
+    post.imageUrl = nextImages[0];
+  } else if (uploadedImages.length || legacyImage) {
+    const nextImages = uploadedImages.length ? uploadedImages : [legacyImage];
+    post.images = nextImages;
+    post.imageUrl = nextImages[0];
+  } else if (!post.images?.length && post.imageUrl) {
+    post.images = [post.imageUrl];
+  }
 
   await post.save();
   await syncFinspoHashtags(previousPost, post);

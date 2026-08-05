@@ -25,6 +25,7 @@ if (!mongoTestUri) {
   const {
     confirmCollection,
     releaseExpiredDelivery,
+    resolveOrderReport,
     submitReport,
   } = require("../src/services/orderLifecycleService");
 
@@ -339,6 +340,98 @@ if (!mongoTestUri) {
         assert.equal(sellerAfter.wallet.escrow, 0);
         assert.equal(events[0].eventType, "funds_released");
       }
+    },
+  );
+
+  test(
+    "admin seller resolution closes the report and releases escrow exactly once",
+    { timeout: 30_000 },
+    async () => {
+      const amount = 320;
+      const { buyer, pinnedSeller, shop } = await createParticipants(
+        "admin_seller_resolution",
+        amount,
+      );
+      const resolver = await createUser("admin_dispute_resolver");
+      const now = new Date();
+      const order = await createHeldOrder({
+        amount,
+        buyerId: buyer._id,
+        delivery: { fee: 0, method: "shop_pickup" },
+        fulfillmentStatus: "ready_for_pickup",
+        settlementSellerId: pinnedSeller._id,
+        shopId: shop._id,
+        timestamps: {
+          pickupExpiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+          readyAt: new Date(now.getTime() - 1000),
+          workflowDeadlineAt: new Date(now.getTime() + 60 * 60 * 1000),
+        },
+      });
+      const report = await submitReport({
+        affectedItemIds: [order.items[0]._id],
+        category: "damaged_or_not_as_described",
+        declarationAccepted: true,
+        detailedAccount:
+          "The buyer reported damage, but the reviewed evidence supports releasing the protected payment.",
+        idempotencyKey: "admin-seller-report",
+        now,
+        orderId: order._id,
+        requestedOutcome: "refund",
+        userId: buyer._id,
+      });
+
+      const attempts = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          resolveOrderReport({
+            awardedTo: "seller",
+            note: "Evidence reviewed; the delivered item matches the listing and the seller fulfilled the order.",
+            now: new Date(now.getTime() + 1000),
+            orderId: order._id,
+            resolverId: resolver._id,
+          }),
+        ),
+      );
+      assert.equal(
+        attempts.filter(({ status }) => status === "rejected").length,
+        0,
+        attempts
+          .filter(({ status }) => status === "rejected")
+          .map(({ reason }) => reason?.stack || reason)
+          .join("\n"),
+      );
+
+      const [storedOrder, storedReport, sellerAfter, settlements, ledger] =
+        await Promise.all([
+          Order.findById(order._id).lean(),
+          OrderReport.findById(report._id).lean(),
+          User.findById(pinnedSeller._id).lean(),
+          Settlement.find({ orderId: order._id }).lean(),
+          WalletLedgerEntry.find({ orderId: order._id }).lean(),
+        ]);
+
+      assert.equal(storedOrder.activeReportId, undefined);
+      assert.equal(storedOrder.fulfillmentStatus, "completed");
+      assert.equal(storedOrder.settlementStatus, "released");
+      assert.equal(storedOrder.reportResolution.awardedTo, "seller");
+      assert.equal(storedReport.isActive, false);
+      assert.equal(storedReport.status, "resolved");
+      assert.equal(storedReport.resolution.awardedTo, "seller");
+      assert.equal(String(storedReport.resolution.resolverId), String(resolver._id));
+      assert.match(storedReport.resolution.note, /evidence reviewed/i);
+      assert.equal(sellerAfter.wallet.balance, 25 + amount);
+      assert.equal(sellerAfter.wallet.escrow, 0);
+      assert.equal(settlements.length, 1);
+      assert.equal(settlements[0].type, "release");
+      assert.equal(settlements[0].trigger, "report_resolution");
+      assert.equal(ledger.length, 1);
+      assert.equal(ledger[0].entryType, "escrow_release");
+      assert.equal(
+        await OrderEvent.countDocuments({
+          eventType: "funds_released",
+          orderId: order._id,
+        }),
+        1,
+      );
     },
   );
 }

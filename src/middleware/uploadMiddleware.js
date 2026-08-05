@@ -177,6 +177,14 @@ const listingImages = [
   uploadToS3("listings"),
 ];
 
+const finspoImages = [
+  upload(5).fields([
+    { name: "images", maxCount: 8 },
+    { name: "image", maxCount: 1 },
+  ]),
+  uploadToS3("gallery"),
+];
+
 /** KYC: multipart fields `idImg` + `selfie` → memory → S3 `kyc/` → URLs on `req.fileUrlMap` */
 const kycDocuments = [
   upload(10).fields([
@@ -218,6 +226,7 @@ const orderReportEvidence = [
 
 module.exports = {
   chatAttachments,
+  finspoImages,
   listingImages,
   kycDocuments,
   orderDispatchBill,

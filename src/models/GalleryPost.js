@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { MAX_HASHTAGS, normalizeHashtags } = require("../utils/hashtags");
+const { MAX_FINSPO_IMAGES } = require("../utils/finspoImages");
 const { Schema } = mongoose;
 
 const galleryPostSchema = new Schema(
@@ -12,6 +13,14 @@ const galleryPostSchema = new Schema(
     imageUrl: {
       type: String,
       required: true,
+    },
+    images: {
+      type: [String],
+      default: undefined,
+      validate: [
+        (value) => value === undefined || (value.length >= 1 && value.length <= MAX_FINSPO_IMAGES),
+        `A Finspo post must have between 1 and ${MAX_FINSPO_IMAGES} images`,
+      ],
     },
     caption: {
       type: String,

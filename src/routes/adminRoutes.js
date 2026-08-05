@@ -134,7 +134,10 @@ router.put(
   canResolveDisputes,
   validate(
     z.object({
-      body: z.object({ resolveFor: z.enum(["seller", "buyer"]) }),
+      body: z.object({
+        note: z.string().trim().min(10).max(1000),
+        resolveFor: z.enum(["seller", "buyer"]),
+      }).strict(),
       params: z.object({ orderId: z.string().min(1) }),
       query: z.object({}),
     }),

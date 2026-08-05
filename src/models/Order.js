@@ -218,6 +218,13 @@ const orderSchema = new Schema(
       ref: "OrderReport",
       index: true,
     },
+    reportResolution: {
+      awardedTo: {
+        type: String,
+        enum: ["buyer", "seller"],
+      },
+      resolvedAt: Date,
+    },
 
     paymentRef: {
       type: String,

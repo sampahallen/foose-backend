@@ -17,6 +17,7 @@ const {
 } = require("../services/emailService");
 const { createNotification } = require("../services/notificationService");
 const { syncListingHashtags } = require("../services/hashtagService");
+const { resolveOrderReport } = require("../services/orderLifecycleService");
 const {
   runSearchSync,
   syncListingSearchDocument,
@@ -633,16 +634,25 @@ exports.disputes = asyncHandler(async (req, res) => {
     res,
     {
       orders: reports.map((report) => report.orderId).filter(Boolean),
-      readOnly: true,
+      readOnly: false,
       reports,
     },
-    "Order reports loaded read-only",
+    "Order reports loaded",
   );
 });
 
 exports.resolveDispute = asyncHandler(async (req, res) => {
-  throw httpError(
-    410,
-    "Order report resolution is read-only until the dedicated resolution workflow is released",
+  const result = await resolveOrderReport({
+    awardedTo: req.body.resolveFor,
+    note: req.body.note,
+    orderId: req.params.orderId,
+    resolverId: req.user.id,
+  });
+  return success(
+    res,
+    result,
+    req.body.resolveFor === "buyer"
+      ? "Report resolved and buyer refund started"
+      : "Report resolved and funds released to seller",
   );
 });
