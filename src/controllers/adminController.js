@@ -619,13 +619,27 @@ exports.removeListing = asyncHandler(async (req, res) => {
 
 exports.disputes = asyncHandler(async (req, res) => {
   const reports = await OrderReport.find({ isActive: true })
-    .populate("buyerId", "name email username")
-    .populate("shopId", "shopName ownerId")
+    .populate("buyerId", "name email username phone location")
+    .populate({
+      path: "shopId",
+      select: "shopName ownerId location",
+      populate: {
+        path: "ownerId",
+        select: "name email username phone location",
+      },
+    })
     .populate({
       path: "orderId",
       populate: [
-        { path: "buyerId", select: "name email username" },
-        { path: "shopId", select: "shopName ownerId" },
+        { path: "buyerId", select: "name email username phone location" },
+        {
+          path: "shopId",
+          select: "shopName ownerId location",
+          populate: {
+            path: "ownerId",
+            select: "name email username phone location",
+          },
+        },
       ],
     })
     .sort({ submittedAt: 1, _id: 1 });

@@ -84,6 +84,13 @@ test("Order exposes a per-shop checkout idempotency index", () => {
   assert.equal(anchorIndex[1].partialFilterExpression.checkoutAnchor, true);
 });
 
+test("Order transit schema uses driver phone and optional parcel number only", () => {
+  assert.ok(Order.schema.path("delivery.transit.driverPhone"));
+  assert.ok(Order.schema.path("delivery.transit.parcelNumber"));
+  assert.equal(Order.schema.path("delivery.transit.busNumber"), undefined);
+  assert.equal(Order.schema.path("delivery.transit.lastStopLocation"), undefined);
+});
+
 test("OrderReport accepts migrated declarations but requires buyer declarations", () => {
   const base = {
     buyerId: objectId(),

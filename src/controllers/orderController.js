@@ -17,6 +17,7 @@ const { createPrivateDownloadUrl } = require("../config/s3");
 const asyncHandler = require("../utils/asyncHandler");
 const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
+const { normalizePhone } = require("../utils/phone");
 const { invalidate } = require("../utils/cache");
 const {
   AIRPORT_COURIER,
@@ -1451,12 +1452,17 @@ exports.dispatch = sendActionResult({
   handler: async (req) => {
     const billImage = req.privateUploadMap?.billImage?.[0];
     if (!billImage) throw httpError(422, "A waybill image is required");
-    const cargoTrackingNumber = asTrimmed(req.body.cargoTrackingNumber, 120);
+    const driverPhone = normalizePhone(req.body.driverPhone);
+    if (!/^0\d{9}$/.test(driverPhone)) {
+      throw httpError(422, "Enter a valid 10-digit driver phone number");
+    }
+    const parcelNumber = asTrimmed(req.body.parcelNumber, 120);
     const order = await dispatchOrder({
       billImage,
-      cargoTrackingNumber,
+      driverPhone,
       idempotencyKey: idempotencyKeyFor(req),
       orderId: req.params.id,
+      parcelNumber,
       userId: req.user.id,
     });
     req.committedPrivateKeys = [

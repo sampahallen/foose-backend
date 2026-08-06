@@ -362,18 +362,6 @@ const orderSchema = new Schema(
           maxlength: 160,
           default: "",
         },
-        busNumber: {
-          type: String,
-          trim: true,
-          maxlength: 80,
-          default: "",
-        },
-        lastStopLocation: {
-          type: String,
-          trim: true,
-          maxlength: 240,
-          default: "",
-        },
         driverPhone: {
           type: String,
           trim: true,

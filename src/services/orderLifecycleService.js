@@ -445,7 +445,7 @@ const restoreInventory = async (order, session) => {
           },
         },
       ],
-      sessionOptions(session),
+      sessionOptions(session, { updatePipeline: true }),
     );
     if (Number(result.matchedCount ?? result.modifiedCount ?? 0) !== 1) {
       throw httpError(
@@ -1550,10 +1550,11 @@ const confirmCollection = async ({
 
 const dispatchOrder = ({
   billImage,
-  cargoTrackingNumber,
+  driverPhone,
   idempotencyKey,
   now = new Date(),
   orderId,
+  parcelNumber,
   userId,
 }) =>
   simpleTransition({
@@ -1576,7 +1577,8 @@ const dispatchOrder = ({
         deliveryReleaseAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
         "delivery.transit": {
           billImage,
-          cargoTrackingNumber: cargoTrackingNumber || "",
+          driverPhone,
+          parcelNumber: parcelNumber || "",
         },
         fulfillmentStatus: "in_transit",
         sellerAction: "shipped",

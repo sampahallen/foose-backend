@@ -19,6 +19,15 @@ const emptyActionSchema = z.object({
   query: z.object({}).passthrough(),
 });
 
+const dispatchActionSchema = z.object({
+  body: z.object({
+    driverPhone: z.string().trim().min(7).max(40),
+    parcelNumber: z.string().trim().max(120).optional().default(""),
+  }).strict(),
+  params: z.object({ id: z.string().min(1) }),
+  query: z.object({}),
+});
+
 router.post(
   "/",
   auth,
@@ -189,6 +198,7 @@ router.post(
   auth,
   hasShop,
   ...orderDispatchBill,
+  validate(dispatchActionSchema),
   controller.dispatch,
 );
 router.post(
@@ -223,6 +233,7 @@ router.put(
   auth,
   hasShop,
   ...orderDispatchBill,
+  validate(dispatchActionSchema),
   controller.markShipped,
 );
 router.put(
