@@ -1,5 +1,22 @@
 const Notification = require("../models/Notification");
+const User = require("../models/User");
 const { chatUserRoom, notificationUserRoom } = require("../socket/rooms");
+
+// KYC notifications are safety-critical and are never gated by preference -
+// callers must never pass lifecycleEmailRequired for type "kyc".
+const GATED_TYPES = new Set(["order", "chat", "review", "system"]);
+
+// Preferences are stored per user; default to enabled (true) for any account
+// that predates the preferences field, or any category with no stored value.
+const categoryEmailEnabled = async (userId, category) => {
+  const user = await User.findById(userId).select("preferences").lean();
+  return user?.preferences?.notifications?.[category]?.email ?? true;
+};
+
+const categoryInAppEnabled = async (userId, category) => {
+  const user = await User.findById(userId).select("preferences").lean();
+  return user?.preferences?.notifications?.[category]?.inApp ?? true;
+};
 
 const markCreationResult = (notification, wasCreated) => {
   if (!notification || typeof notification !== "object") return notification;
@@ -24,6 +41,16 @@ const createNotification = async ({
   eventKey,
   lifecycleEmailRequired = false,
 }) => {
+  // "system" (follows/likes/comments) is the only category with a full mute:
+  // when off, skip creating the record and emitting it entirely.
+  if (type === "system" && !(await categoryInAppEnabled(userId, "system"))) {
+    return null;
+  }
+
+  const emailRequired = lifecycleEmailRequired
+    && GATED_TYPES.has(type)
+    && (await categoryEmailEnabled(userId, type));
+
   let notification;
   try {
     notification = await Notification.create({
@@ -33,7 +60,7 @@ const createNotification = async ({
       body,
       link,
       ...(eventKey ? { eventKey } : {}),
-      ...(lifecycleEmailRequired ? { lifecycleEmailRequired: true } : {}),
+      ...(emailRequired ? { lifecycleEmailRequired: true } : {}),
     });
   } catch (error) {
     if (eventKey && error?.code === 11000) {
@@ -58,5 +85,6 @@ const createNotification = async ({
 };
 
 module.exports = {
+  categoryEmailEnabled,
   createNotification,
 };

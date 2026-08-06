@@ -5,8 +5,18 @@ const auth = require("../middleware/authMiddleware");
 const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const validate = require("../middleware/validateMiddleware");
 const { singleImage } = require("../middleware/uploadMiddleware");
+const { emailChangeLimiter } = require("../middleware/rateLimitMiddleware");
+const { isDisposableEmail } = require("../utils/email");
 
 const router = express.Router();
+const newAccountEmail = z
+  .string()
+  .trim()
+  .email()
+  .transform((email) => email.toLowerCase())
+  .refine((email) => !isDisposableEmail(email), {
+    message: "Disposable or temporary email addresses are not allowed",
+  });
 const usernameAvailabilityQuerySchema = z.object({
   username: z
     .string()
@@ -26,6 +36,17 @@ const profileConnectionsQuerySchema = z.object({
 }).strict();
 const profileUsernameSchema = z.object({
   username: z.string().trim().min(1).transform((username) => username.toLowerCase()),
+}).strict();
+const notificationCategorySchema = z.object({ email: z.boolean() }).strict().partial();
+const systemNotificationCategorySchema = z.object({ email: z.boolean(), inApp: z.boolean() }).strict().partial();
+const preferencesBodySchema = z.object({
+  theme: z.enum(["light", "dark", "system"]).optional(),
+  notifications: z.object({
+    order: notificationCategorySchema.optional(),
+    chat: notificationCategorySchema.optional(),
+    review: notificationCategorySchema.optional(),
+    system: systemNotificationCategorySchema.optional(),
+  }).strict().optional(),
 }).strict();
 
 router.get("/me", auth, controller.getMe);
@@ -76,6 +97,45 @@ router.put(
     }),
   ),
   controller.changePassword,
+);
+router.put(
+  "/me/preferences",
+  auth,
+  validate(
+    z.object({
+      body: preferencesBodySchema,
+      params: z.object({}),
+      query: z.object({}),
+    }),
+  ),
+  controller.updatePreferences,
+);
+router.post(
+  "/me/email-change",
+  auth,
+  emailChangeLimiter,
+  validate(
+    z.object({
+      body: z.object({
+        currentPassword: z.string().min(1),
+        newEmail: newAccountEmail,
+      }).strict(),
+      params: z.object({}),
+      query: z.object({}),
+    }),
+  ),
+  controller.requestEmailChange,
+);
+router.post(
+  "/email-change/confirm",
+  validate(
+    z.object({
+      body: z.object({ token: z.string().min(1) }).strict(),
+      params: z.object({}),
+      query: z.object({}),
+    }),
+  ),
+  controller.confirmEmailChange,
 );
 router.post("/me/deactivate", auth, controller.deactivateMe);
 router.delete(

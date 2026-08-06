@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const FinspoComment = require("../src/models/FinspoComment");
 const GalleryPost = require("../src/models/GalleryPost");
 const Notification = require("../src/models/Notification");
+const User = require("../src/models/User");
 const communityController = require("../src/controllers/communityController");
 const communityRoutes = require("../src/routes/communityRoutes");
 const optionalAuth = require("../src/middleware/optionalAuthMiddleware");
@@ -49,6 +50,11 @@ const populatedLeanQuery = (value) => ({
   },
 });
 
+// createNotification looks up the recipient's notification preferences via
+// User.findById(...).select("preferences").lean() before creating anything;
+// returning null here falls back to every category's default-enabled state.
+const allowAllNotificationPreferences = () => leanQuery(null);
+
 test("notifications declare a unique per-user event key", () => {
   const eventKey = Notification.schema.path("eventKey");
   assert.ok(eventKey);
@@ -82,6 +88,7 @@ test("notifications declare the named unread inbox index", () => {
 test("notification service treats duplicate event keys as the existing notification", async () => {
   const originalCreate = Notification.create;
   const originalFindOne = Notification.findOne;
+  const originalUserFindById = User.findById;
   const existing = { _id: new mongoose.Types.ObjectId(), eventKey: "same-event" };
   let findFilter;
   Notification.create = async () => {
@@ -93,6 +100,7 @@ test("notification service treats duplicate event keys as the existing notificat
     findFilter = filter;
     return existing;
   };
+  User.findById = allowAllNotificationPreferences;
 
   try {
     const userId = new mongoose.Types.ObjectId();
@@ -110,16 +118,19 @@ test("notification service treats duplicate event keys as the existing notificat
   } finally {
     Notification.create = originalCreate;
     Notification.findOne = originalFindOne;
+    User.findById = originalUserFindById;
   }
 });
 
 test("Finspo activity notifications suppress self activity and use exact deduplicated links", async () => {
   const originalCreate = Notification.create;
+  const originalUserFindById = User.findById;
   const created = [];
   Notification.create = async (payload) => {
     created.push(payload);
     return { _id: new mongoose.Types.ObjectId(), ...payload };
   };
+  User.findById = allowAllNotificationPreferences;
 
   const actorId = new mongoose.Types.ObjectId();
   const ownerId = new mongoose.Types.ObjectId();
@@ -160,6 +171,7 @@ test("Finspo activity notifications suppress self activity and use exact dedupli
     assert.ok(created.every((notification) => notification.type === "system"));
   } finally {
     Notification.create = originalCreate;
+    User.findById = originalUserFindById;
   }
 });
 
@@ -225,6 +237,7 @@ test("comment likes notify only on the positive transition", async () => {
   const originalPostFindOne = GalleryPost.findOne;
   const originalCommentFindOne = FinspoComment.findOne;
   const originalNotificationCreate = Notification.create;
+  const originalUserFindById = User.findById;
   const postId = new mongoose.Types.ObjectId();
   const commentId = new mongoose.Types.ObjectId();
   const actorId = new mongoose.Types.ObjectId();
@@ -244,6 +257,7 @@ test("comment likes notify only on the positive transition", async () => {
     created.push(payload);
     return payload;
   };
+  User.findById = allowAllNotificationPreferences;
 
   const request = {
     currentUser: { _id: actorId, username: "liker" },
@@ -265,5 +279,6 @@ test("comment likes notify only on the positive transition", async () => {
     GalleryPost.findOne = originalPostFindOne;
     FinspoComment.findOne = originalCommentFindOne;
     Notification.create = originalNotificationCreate;
+    User.findById = originalUserFindById;
   }
 });

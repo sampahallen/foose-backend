@@ -9,7 +9,7 @@ const {
   LATE_CHARGE_WATCH_MS,
   PAYMENT_RESERVATION_WINDOW_MS,
 } = require("../constants/orderLifecycle");
-const { createNotification } = require("./notificationService");
+const { categoryEmailEnabled, createNotification } = require("./notificationService");
 const { sendOrderLifecycleEmail } = require("./emailService");
 const { verifyTransaction } = require("./paystackService");
 const {
@@ -222,20 +222,31 @@ const deliverEligibilityNotification = async ({
   }
 
   if (!emailSent) {
-    try {
-      await sendOrderLifecycleEmail({
-        message: body,
-        order,
-        subject: title,
-        user,
-      });
+    // A disabled "order" email preference finalizes this leg as done (not
+    // retried) rather than being skipped silently, which would otherwise
+    // leave emailSent permanently false and retry forever.
+    if (!(await categoryEmailEnabled(user._id, "order"))) {
       await Order.updateOne(
         { _id: order._id, [`${claimField}.token`]: token },
         { $set: { [emailField]: now } },
       );
       emailSent = true;
-    } catch (error) {
-      errors.push(error);
+    } else {
+      try {
+        await sendOrderLifecycleEmail({
+          message: body,
+          order,
+          subject: title,
+          user,
+        });
+        await Order.updateOne(
+          { _id: order._id, [`${claimField}.token`]: token },
+          { $set: { [emailField]: now } },
+        );
+        emailSent = true;
+      } catch (error) {
+        errors.push(error);
+      }
     }
   }
 

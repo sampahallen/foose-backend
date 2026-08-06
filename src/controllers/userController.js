@@ -15,9 +15,15 @@ const {
   rebuildUserSearchDocuments,
   runSearchSync,
 } = require("../services/searchIndexService");
+const {
+  consumeEmailChangeToken,
+  emailChangeConfirmationLink,
+  issueEmailChangeToken,
+} = require("../services/emailChangeService");
+const { sendEmailChangeConfirmationEmail } = require("../services/emailService");
 
 const privateFields =
-  "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -deletedEmail -deletedUsername";
+  "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -deletedEmail -deletedUsername -pendingEmailToken -pendingEmailExpires";
 const activeAccountFilter = { $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }] };
 
 exports.getMe = asyncHandler(async (req, res) => {
@@ -333,6 +339,75 @@ exports.changePassword = asyncHandler(async (req, res) => {
   await user.save();
 
   return success(res, {}, "Password changed");
+});
+
+exports.requestEmailChange = asyncHandler(async (req, res) => {
+  const { currentPassword, newEmail } = req.body;
+  const user = await User.findById(req.user.id).select("+passwordHash");
+
+  const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!matches) {
+    throw httpError(400, "Current password is incorrect");
+  }
+
+  if (newEmail === user.email) {
+    throw httpError(400, "That is already your email address");
+  }
+
+  const taken = await User.exists({ email: newEmail, _id: { $ne: req.user.id } });
+  if (taken) {
+    throw httpError(409, "That email address is already in use");
+  }
+
+  const token = await issueEmailChangeToken(user, newEmail);
+  await sendEmailChangeConfirmationEmail(user, newEmail, emailChangeConfirmationLink(token));
+
+  return success(res, { pendingEmail: newEmail }, "Check your new inbox to confirm the change");
+});
+
+exports.confirmEmailChange = asyncHandler(async (req, res) => {
+  let user;
+  try {
+    user = await consumeEmailChangeToken(req.body.token);
+  } catch (error) {
+    if (error?.code === "EMAIL_TAKEN") {
+      throw httpError(409, error.message);
+    }
+    throw error;
+  }
+
+  if (!user) {
+    throw httpError(400, "Invalid or expired email change link");
+  }
+
+  return success(res, { email: user.email }, "Email address updated");
+});
+
+const NOTIFICATION_CATEGORIES = ["order", "chat", "review", "system"];
+
+exports.updatePreferences = asyncHandler(async (req, res) => {
+  const { notifications, theme } = req.body;
+  const updates = {};
+
+  if (theme !== undefined) updates["preferences.theme"] = theme;
+
+  NOTIFICATION_CATEGORIES.forEach((category) => {
+    const categoryUpdates = notifications?.[category];
+    if (!categoryUpdates) return;
+    if (categoryUpdates.email !== undefined) {
+      updates[`preferences.notifications.${category}.email`] = categoryUpdates.email;
+    }
+    if (category === "system" && categoryUpdates.inApp !== undefined) {
+      updates["preferences.notifications.system.inApp"] = categoryUpdates.inApp;
+    }
+  });
+
+  const user = await User.findByIdAndUpdate(req.user.id, { $set: updates }, {
+    new: true,
+    runValidators: true,
+  }).select(privateFields);
+
+  return success(res, { user }, "Preferences updated");
 });
 
 exports.deactivateMe = asyncHandler(async (req, res) => {

@@ -260,6 +260,7 @@ test("socket capabilities retain notifications but expose chat only after verifi
 test("system and chat notifications emit to isolated personal rooms", async () => {
   const originalCreate = Notification.create;
   const originalGetIO = socketConfig.getIO;
+  const originalFindById = User.findById;
   const rooms = [];
   Notification.create = async (payload) => ({ _id: "notification-1", ...payload });
   socketConfig.getIO = () => ({
@@ -268,6 +269,9 @@ test("system and chat notifications emit to isolated personal rooms", async () =
       return { emit() {} };
     },
   });
+  // createNotification checks the recipient's stored notification
+  // preferences before creating a "system"-type notification.
+  User.findById = () => ({ select: () => ({ lean: async () => null }) });
 
   try {
     await createNotification({
@@ -297,5 +301,6 @@ test("system and chat notifications emit to isolated personal rooms", async () =
   } finally {
     Notification.create = originalCreate;
     socketConfig.getIO = originalGetIO;
+    User.findById = originalFindById;
   }
 });

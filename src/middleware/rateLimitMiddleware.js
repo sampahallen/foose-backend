@@ -64,6 +64,18 @@ const verificationEmailLimiter = createLimiter({
   },
 });
 
+const emailChangeLimiter = createLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many email change requests. Please try again later.",
+  },
+});
+
 const promotionMetricLimiter = createLimiter({
   windowMs: 60 * 1000,
   limit: 120,
@@ -74,6 +86,7 @@ const promotionMetricLimiter = createLimiter({
 
 module.exports = {
   authLimiter,
+  emailChangeLimiter,
   generalLimiter,
   kycLimiter,
   promotionMetricLimiter,

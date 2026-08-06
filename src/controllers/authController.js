@@ -33,7 +33,7 @@ const {
 
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
-const userFields = "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -authProviders";
+const userFields = "-passwordHash -refreshTokens -emailVerifyToken -emailVerifyExpires -resetPasswordToken -resetPasswordExpires -authProviders -pendingEmailToken -pendingEmailExpires";
 
 const ensureRecommendationProfile = async (userId) => {
   try {

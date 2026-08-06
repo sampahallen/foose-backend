@@ -45,5 +45,57 @@ Content-Type: application/json
   "newPassword": "newpassword123"
 }
 
+### Update theme preference only
+PUT {{baseUrl}}/users/me/preferences
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "theme": "dark"
+}
+
+### Update notification preferences only
+PUT {{baseUrl}}/users/me/preferences
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "notifications": {
+    "order": { "email": false },
+    "system": { "email": true, "inApp": false }
+  }
+}
+
+### Update theme and notification preferences together
+PUT {{baseUrl}}/users/me/preferences
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "theme": "system",
+  "notifications": {
+    "chat": { "email": false },
+    "review": { "email": false }
+  }
+}
+
+### Request an email change (sends a confirmation link to the new address)
+POST {{baseUrl}}/users/me/email-change
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "currentPassword": "password123",
+  "newEmail": "ama.new@example.com"
+}
+
+### Confirm an email change with the token from the confirmation email
+POST {{baseUrl}}/users/email-change/confirm
+Content-Type: application/json
+
+{
+  "token": "paste_email_change_token_here"
+}
+
 ### Public user profile
 GET {{baseUrl}}/users/{{username}}

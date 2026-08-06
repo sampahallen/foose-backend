@@ -101,6 +101,20 @@ const userSchema = new Schema(
     },
     resetPasswordToken: String,
     resetPasswordExpires: Date,
+    pendingEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      default: "",
+    },
+    pendingEmailToken: {
+      type: String,
+      select: false,
+    },
+    pendingEmailExpires: {
+      type: Date,
+      select: false,
+    },
     refreshTokens: {
       type: [String],
       default: [],
@@ -159,6 +173,30 @@ const userSchema = new Schema(
         ref: "User",
       },
     ],
+    preferences: {
+      theme: {
+        type: String,
+        enum: ["light", "dark", "system"],
+        default: "system",
+      },
+      // Chat/review "email" toggles are forward-compatible: no email trigger is
+      // currently wired to those categories, so they're inert until one exists.
+      notifications: {
+        order: {
+          email: { type: Boolean, default: true },
+        },
+        chat: {
+          email: { type: Boolean, default: true },
+        },
+        review: {
+          email: { type: Boolean, default: true },
+        },
+        system: {
+          email: { type: Boolean, default: true },
+          inApp: { type: Boolean, default: true },
+        },
+      },
+    },
   },
   { timestamps: true },
 );

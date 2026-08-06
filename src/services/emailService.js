@@ -262,6 +262,28 @@ const sendSellerOrderEmail = (seller, order, buyer) => {
   });
 };
 
+const sendEmailChangeConfirmationEmail = (user, newEmail, confirmationLink) => {
+  const name = displayName(user);
+  const safeName = escapeHtml(name);
+
+  return sendEmail({
+    to: newEmail,
+    subject: "Confirm your new Foose email address",
+    text: `Hi ${name},\n\nUse this secure link to confirm this address as your new Foose account email:\n\n${confirmationLink}\n\nThis link expires in 30 minutes. If you didn't request this change, ignore this email and your account email will stay the same.`,
+    html: renderEmailLayout({
+      heading: "Confirm your new email",
+      preheader: "Confirm this address to finish updating your Foose account email.",
+      bodyHtml: `
+        <p>Hi ${safeName},</p>
+        <p>Use the button below to confirm this address as your new Foose account email.</p>
+        <p style="color:${BRAND.muted}; font-size:13px;">This link expires in 30 minutes.</p>
+        <p style="color:${BRAND.muted}; font-size:13px;">If you didn&rsquo;t request this change, ignore this email &mdash; your account email will stay the same.</p>
+      `,
+      cta: { label: "Confirm new email", url: confirmationLink },
+    }),
+  });
+};
+
 const sendOrderLifecycleEmail = ({ user, order, subject, message }) => {
   if (!user?.email) return Promise.resolve({ skipped: true });
 
@@ -290,6 +312,7 @@ module.exports = {
   sendKycRejectedEmail,
   sendPasswordResetEmail,
   sendDigiShopWelcomeEmail,
+  sendEmailChangeConfirmationEmail,
   sendOrderLifecycleEmail,
   sendSellerOrderEmail,
 };
