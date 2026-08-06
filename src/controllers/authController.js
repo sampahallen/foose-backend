@@ -15,10 +15,10 @@ const {
   syncUserSearchDocument,
 } = require("../services/searchIndexService");
 const {
-  appleAuthorizationUrl,
   clientCallbackUrl,
+  facebookAuthorizationUrl,
   findOrCreateOAuthUser,
-  getAppleProfile,
+  getFacebookProfile,
   getGoogleProfile,
   googleAuthorizationUrl,
   clientUrl,
@@ -252,8 +252,8 @@ exports.startGoogleOAuth = asyncHandler(async (req, res) => {
   return res.redirect(googleAuthorizationUrl(req.query.redirect));
 });
 
-exports.startAppleOAuth = asyncHandler(async (req, res) => {
-  return res.redirect(appleAuthorizationUrl(req.query.redirect));
+exports.startFacebookOAuth = asyncHandler(async (req, res) => {
+  return res.redirect(facebookAuthorizationUrl(req.query.redirect));
 });
 
 exports.googleCallback = asyncHandler(async (req, res) => {
@@ -265,11 +265,11 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   return sendOAuthRedirect(res, user, redirectTarget);
 });
 
-exports.appleCallback = asyncHandler(async (req, res) => {
-  const redirectTarget = readState(req.body.state || req.query.state);
-  const profile = await getAppleProfile(req.body.code || req.query.code, req.body.user);
+exports.facebookCallback = asyncHandler(async (req, res) => {
+  const redirectTarget = readState(req.query.state);
+  const profile = await getFacebookProfile(req.query.code);
   const user = await findOrCreateOAuthUser(profile);
-  await runSearchSync(`user:${user._id}:apple-oauth`, () =>
+  await runSearchSync(`user:${user._id}:facebook-oauth`, () =>
     syncUserSearchDocument(user._id));
   return sendOAuthRedirect(res, user, redirectTarget);
 });

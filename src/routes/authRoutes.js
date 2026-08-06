@@ -38,10 +38,9 @@ const registerBodySchema = z.object({
 });
 
 router.get("/oauth/google", authLimiter, controller.startGoogleOAuth);
-router.get("/oauth/apple", authLimiter, controller.startAppleOAuth);
+router.get("/oauth/facebook", authLimiter, controller.startFacebookOAuth);
 router.get("/oauth/google/callback", authLimiter, controller.googleCallback);
-router.post("/oauth/apple/callback", authLimiter, controller.appleCallback);
-router.get("/oauth/apple/callback", authLimiter, controller.appleCallback);
+router.get("/oauth/facebook/callback", authLimiter, controller.facebookCallback);
 
 router.post(
   "/register",

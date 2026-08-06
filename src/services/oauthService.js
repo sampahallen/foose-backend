@@ -41,7 +41,7 @@ const publicApiUrl = () => {
 };
 
 const redirectUri = (provider) => {
-  const envKey = provider === "google" ? "GOOGLE_OAUTH_REDIRECT_URI" : "APPLE_OAUTH_REDIRECT_URI";
+  const envKey = provider === "google" ? "GOOGLE_OAUTH_REDIRECT_URI" : "FACEBOOK_OAUTH_REDIRECT_URI";
   return process.env[envKey] || `${publicApiUrl()}/api/auth/oauth/${provider}/callback`;
 };
 
@@ -194,73 +194,56 @@ const getGoogleProfile = async (code) => {
   };
 };
 
-const appleClientSecret = () => {
-  const privateKey = requireEnv("APPLE_OAUTH_PRIVATE_KEY").replace(/\\n/g, "\n");
-  return jwt.sign(
-    {
-      aud: "https://appleid.apple.com",
-      iss: requireEnv("APPLE_OAUTH_TEAM_ID"),
-      sub: requireEnv("APPLE_OAUTH_CLIENT_ID"),
-    },
-    privateKey,
-    {
-      algorithm: "ES256",
-      expiresIn: "5m",
-      header: { alg: "ES256", kid: requireEnv("APPLE_OAUTH_KEY_ID") },
-    },
-  );
-};
+const FACEBOOK_GRAPH_VERSION = "v19.0";
 
-const appleAuthorizationUrl = (redirect) => {
+const facebookAuthorizationUrl = (redirect) => {
   const params = new URLSearchParams({
-    client_id: requireEnv("APPLE_OAUTH_CLIENT_ID"),
-    redirect_uri: redirectUri("apple"),
-    response_mode: "form_post",
+    client_id: requireEnv("FACEBOOK_OAUTH_CLIENT_ID"),
+    redirect_uri: redirectUri("facebook"),
     response_type: "code",
-    scope: "name email",
+    scope: "email public_profile",
     state: signState(redirect),
   });
-  return `https://appleid.apple.com/auth/authorize?${params.toString()}`;
+  return `https://www.facebook.com/${FACEBOOK_GRAPH_VERSION}/dialog/oauth?${params.toString()}`;
 };
 
-const getAppleProfile = async (code, userPayload) => {
-  const tokenResponse = await axios.post(
-    "https://appleid.apple.com/auth/token",
-    new URLSearchParams({
-      client_id: requireEnv("APPLE_OAUTH_CLIENT_ID"),
-      client_secret: appleClientSecret(),
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri("apple"),
-    }),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+const getFacebookProfile = async (code) => {
+  const tokenResponse = await axios.get(
+    `https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/oauth/access_token`,
+    {
+      params: {
+        client_id: requireEnv("FACEBOOK_OAUTH_CLIENT_ID"),
+        client_secret: requireEnv("FACEBOOK_OAUTH_CLIENT_SECRET"),
+        code,
+        redirect_uri: redirectUri("facebook"),
+      },
+    },
   );
 
-  const decoded = jwt.decode(tokenResponse.data.id_token) || {};
-  let parsedUser = {};
-  try {
-    parsedUser = userPayload ? JSON.parse(userPayload) : {};
-  } catch {
-    parsedUser = {};
-  }
-
-  const fullName = [parsedUser.name?.firstName, parsedUser.name?.lastName].filter(Boolean).join(" ");
+  const profileResponse = await axios.get(`https://graph.facebook.com/${FACEBOOK_GRAPH_VERSION}/me`, {
+    params: {
+      access_token: tokenResponse.data.access_token,
+      fields: "id,name,email,picture.type(large)",
+    },
+  });
 
   return {
-    email: decoded.email,
-    emailVerified: decoded.email_verified,
-    name: fullName || decoded.email?.split("@")[0],
-    provider: "apple",
-    providerId: decoded.sub,
+    email: profileResponse.data.email,
+    // Facebook only ever shares an email address it has itself verified.
+    emailVerified: Boolean(profileResponse.data.email),
+    name: profileResponse.data.name,
+    profilePhoto: profileResponse.data.picture?.data?.url,
+    provider: "facebook",
+    providerId: profileResponse.data.id,
   };
 };
 
 module.exports = {
-  appleAuthorizationUrl,
   clientCallbackUrl,
   clientUrl,
+  facebookAuthorizationUrl,
   findOrCreateOAuthUser,
-  getAppleProfile,
+  getFacebookProfile,
   getGoogleProfile,
   googleAuthorizationUrl,
   publicApiUrl,

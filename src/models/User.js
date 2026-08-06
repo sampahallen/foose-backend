@@ -125,7 +125,7 @@ const userSchema = new Schema(
         {
           provider: {
             type: String,
-            enum: ["google", "apple"],
+            enum: ["google", "facebook"],
             required: true,
           },
           providerId: {
