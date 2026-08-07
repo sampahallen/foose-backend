@@ -143,22 +143,6 @@ const refreshExpiredVerificationEmail = async (user) => {
   }
 };
 
-const sendAuthRedirect = async (res, user, redirectTarget = "/login") => {
-  await ensureRecommendationProfile(user._id);
-  const tokens = issueTokens(user);
-  user.refreshTokens = [...(user.refreshTokens || []), tokens.refreshToken];
-  await user.save();
-
-  const params = new URLSearchParams({
-    accessToken: tokens.accessToken,
-    expiresIn: tokens.expiresIn || "",
-    redirect: redirectTarget,
-    refreshToken: tokens.refreshToken,
-  });
-
-  return res.redirect(callbackUrlWithParams(params));
-};
-
 const sendOAuthRedirect = async (res, user, redirectTarget) => {
   await ensureRecommendationProfile(user._id);
   const tokens = issueTokens(user);
@@ -173,6 +157,18 @@ const sendOAuthRedirect = async (res, user, redirectTarget) => {
   });
 
   return res.redirect(`${clientCallbackUrl()}#${params.toString()}`);
+};
+
+// OAuth start/callback routes are hit by full-page browser navigation (Google/Facebook
+// redirect the tab here directly), so failures must send the browser back into the SPA
+// with an error param instead of leaving it on a bare JSON error response.
+const oauthErrorRedirect = (res, err, fallbackMessage) => {
+  const isKnownError = typeof err.statusCode === "number";
+  if (!isKnownError) {
+    console.error(`OAuth flow failed: ${err.message}`);
+  }
+  const params = new URLSearchParams({ error: isKnownError ? err.message : fallbackMessage });
+  return res.redirect(callbackUrlWithParams(params));
 };
 
 exports.register = asyncHandler(async (req, res) => {
@@ -249,29 +245,45 @@ exports.login = asyncHandler(async (req, res) => {
 });
 
 exports.startGoogleOAuth = asyncHandler(async (req, res) => {
-  return res.redirect(googleAuthorizationUrl(req.query.redirect));
+  try {
+    return res.redirect(googleAuthorizationUrl(req.query.redirect));
+  } catch (err) {
+    return oauthErrorRedirect(res, err, "Google sign-in is unavailable right now");
+  }
 });
 
 exports.startFacebookOAuth = asyncHandler(async (req, res) => {
-  return res.redirect(facebookAuthorizationUrl(req.query.redirect));
+  try {
+    return res.redirect(facebookAuthorizationUrl(req.query.redirect));
+  } catch (err) {
+    return oauthErrorRedirect(res, err, "Facebook sign-in is unavailable right now");
+  }
 });
 
 exports.googleCallback = asyncHandler(async (req, res) => {
   const redirectTarget = readState(req.query.state);
-  const profile = await getGoogleProfile(req.query.code);
-  const user = await findOrCreateOAuthUser(profile);
-  await runSearchSync(`user:${user._id}:google-oauth`, () =>
-    syncUserSearchDocument(user._id));
-  return sendOAuthRedirect(res, user, redirectTarget);
+  try {
+    const profile = await getGoogleProfile(req.query.code);
+    const user = await findOrCreateOAuthUser(profile);
+    await runSearchSync(`user:${user._id}:google-oauth`, () =>
+      syncUserSearchDocument(user._id));
+    return sendOAuthRedirect(res, user, redirectTarget);
+  } catch (err) {
+    return oauthErrorRedirect(res, err, "Google sign-in failed");
+  }
 });
 
 exports.facebookCallback = asyncHandler(async (req, res) => {
   const redirectTarget = readState(req.query.state);
-  const profile = await getFacebookProfile(req.query.code);
-  const user = await findOrCreateOAuthUser(profile);
-  await runSearchSync(`user:${user._id}:facebook-oauth`, () =>
-    syncUserSearchDocument(user._id));
-  return sendOAuthRedirect(res, user, redirectTarget);
+  try {
+    const profile = await getFacebookProfile(req.query.code);
+    const user = await findOrCreateOAuthUser(profile);
+    await runSearchSync(`user:${user._id}:facebook-oauth`, () =>
+      syncUserSearchDocument(user._id));
+    return sendOAuthRedirect(res, user, redirectTarget);
+  } catch (err) {
+    return oauthErrorRedirect(res, err, "Facebook sign-in failed");
+  }
 });
 
 exports.refresh = asyncHandler(async (req, res) => {
