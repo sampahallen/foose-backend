@@ -489,7 +489,7 @@ const isPromoted = (listing, now = new Date()) =>
   new Date(listing.promotionExpiresAt) > now;
 
 const stableQuery = (query) => Object.keys(query)
-  .filter((key) => !["limit", "page"].includes(key))
+  .filter((key) => !["limit", "page", "seed"].includes(key))
   .sort()
   .reduce((result, key) => {
     result[key] = query[key];
@@ -540,7 +540,8 @@ const buildRecommendationFeed = async ({ query, userId }) => {
   if (!ordered) {
     if (userId) await ensureShadowProfile(userId);
     const profile = userId ? await ShadowProfile.findOne({ userId }).lean() : null;
-    const seed = `${userId || "guest"}:${new Date().toISOString().slice(0, 10)}:${JSON.stringify(stableQuery(query))}`;
+    const requestSeed = String(query.seed || "").trim().slice(0, 120);
+    const seed = `${userId || "guest"}:${requestSeed || new Date().toISOString().slice(0, 10)}:${JSON.stringify(stableQuery(query))}`;
     const tieRandom = createSeededRandom(`${seed}:scores`);
     const scored = candidates.map((listing) => ({
       listing,
