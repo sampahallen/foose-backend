@@ -3,6 +3,7 @@
 @kycId = paste_kyc_id_here
 @listingId = paste_listing_id_here
 @orderId = paste_disputed_order_id_here
+@userReportId = paste_user_report_id_here
 
 ### Platform stats
 GET {{baseUrl}}/admin/stats
@@ -57,4 +58,36 @@ Content-Type: application/json
 
 {
   "resolveFor": "buyer"
+}
+
+### User reports queue
+GET {{baseUrl}}/admin/user-reports
+Authorization: Bearer {{adminAccessToken}}
+
+### User reports queue filtered by status
+GET {{baseUrl}}/admin/user-reports?status=open
+Authorization: Bearer {{adminAccessToken}}
+
+### Get user report
+GET {{baseUrl}}/admin/user-reports/{{userReportId}}
+Authorization: Bearer {{adminAccessToken}}
+
+### Resolve user report
+PUT {{baseUrl}}/admin/user-reports/{{userReportId}}/resolve
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "outcome": "resolved",
+  "note": "Warned the seller and removed the offending listing."
+}
+
+### Dismiss user report
+PUT {{baseUrl}}/admin/user-reports/{{userReportId}}/resolve
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "outcome": "dismissed",
+  "note": "No policy violation found."
 }

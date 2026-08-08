@@ -1,0 +1,19 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@targetUserId = paste_target_user_id_here
+
+### List blocked accounts
+GET {{baseUrl}}/blocks
+Authorization: Bearer {{accessToken}}
+
+### Check block status
+GET {{baseUrl}}/blocks/status/{{targetUserId}}
+Authorization: Bearer {{accessToken}}
+
+### Block a user
+POST {{baseUrl}}/blocks/{{targetUserId}}
+Authorization: Bearer {{accessToken}}
+
+### Unblock a user
+DELETE {{baseUrl}}/blocks/{{targetUserId}}
+Authorization: Bearer {{accessToken}}

@@ -1,6 +1,7 @@
 const express = require("express");
 const { z } = require("zod");
 const { STAFF_ROLE_KEYS } = require("../constants/roles");
+const { USER_REPORT_REASONS, USER_REPORT_STATUSES } = require("../constants/userReports");
 const controller = require("../controllers/adminController");
 const auth = require("../middleware/authMiddleware");
 const {
@@ -143,6 +144,39 @@ router.put(
     }),
   ),
   controller.resolveDispute,
+);
+router.get(
+  "/user-reports",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.object({}).optional().default({}),
+      params: z.object({}),
+      query: z.object({
+        limit: z.string().optional(),
+        page: z.string().optional(),
+        reason: z.enum(USER_REPORT_REASONS).optional(),
+        status: z.enum(USER_REPORT_STATUSES).optional(),
+      }),
+    }),
+  ),
+  controller.userReports,
+);
+router.get("/user-reports/:id", isSuperAdmin, controller.userReportDetail);
+router.put(
+  "/user-reports/:id/resolve",
+  isSuperAdmin,
+  validate(
+    z.object({
+      body: z.object({
+        note: z.string().trim().max(2000).optional(),
+        outcome: z.enum(["resolved", "dismissed"]),
+      }).strict(),
+      params: z.object({ id: z.string().min(1) }),
+      query: z.object({}),
+    }),
+  ),
+  controller.resolveUserReport,
 );
 
 module.exports = router;

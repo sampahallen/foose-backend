@@ -46,6 +46,12 @@ npm run dev
 GET http://localhost:8000/api/health
 ```
 
+This reports the process as up as soon as the server starts listening, before MongoDB has connected. For full service readiness (200 only once MongoDB is connected, 503 otherwise), use:
+
+```http
+GET http://localhost:8000/api/health/ready
+```
+
 ## Hashtag Count Backfill
 
 After deploying the shared hashtag collection for the first time, run this once with the production `MONGO_URI` configured:

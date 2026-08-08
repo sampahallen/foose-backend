@@ -1,0 +1,84 @@
+@baseUrl = http://localhost:8000/api
+@accessToken = paste_access_token_here
+@targetUserId = paste_target_user_id_here
+
+### Report a user - harassment
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "harassment"
+}
+
+### Report a user - scam or fraud
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "scam_or_fraud"
+}
+
+### Report a user - counterfeit or fake listings
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "counterfeit_or_fake_listings"
+}
+
+### Report a user - inappropriate content
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "inappropriate_content"
+}
+
+### Report a user - spam
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "spam"
+}
+
+### Report a user - other, with details
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "other",
+  "details": "Describe the issue here."
+}
+
+### Report a user - other, missing details (expect 422 validation failure)
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "other"
+}
+
+### Duplicate open report against the same account (expect 409)
+POST {{baseUrl}}/reports
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "reportedUserId": "{{targetUserId}}",
+  "reason": "spam"
+}

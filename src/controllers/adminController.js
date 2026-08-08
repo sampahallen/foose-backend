@@ -5,6 +5,7 @@ const KYC = require("../models/KYC");
 const Listing = require("../models/Listing");
 const Order = require("../models/Order");
 const OrderReport = require("../models/OrderReport");
+const UserReport = require("../models/UserReport");
 const User = require("../models/User");
 const mongoose = require("mongoose");
 const asyncHandler = require("../utils/asyncHandler");
@@ -18,6 +19,7 @@ const {
 const { createNotification } = require("../services/notificationService");
 const { syncListingHashtags } = require("../services/hashtagService");
 const { resolveOrderReport } = require("../services/orderLifecycleService");
+const { resolveUserReport } = require("../services/userReportService");
 const {
   runSearchSync,
   syncListingSearchDocument,
@@ -668,5 +670,65 @@ exports.resolveDispute = asyncHandler(async (req, res) => {
     req.body.resolveFor === "buyer"
       ? "Report resolved and buyer refund started"
       : "Report resolved and funds released to seller",
+  );
+});
+
+const userReportPopulate = [
+  { path: "reporterId", select: "name email username phone profilePhoto" },
+  { path: "reportedUserId", select: "name email username phone profilePhoto" },
+];
+
+exports.userReports = asyncHandler(async (req, res) => {
+  const query = req.validated?.query || req.query;
+  const page = positiveInt(query.page, 1, 100000);
+  const limit = positiveInt(query.limit, 50, 50);
+  const filter = {};
+
+  if (query.status) filter.status = query.status;
+  if (query.reason) filter.reason = query.reason;
+
+  const skip = (page - 1) * limit;
+
+  const [records, total] = await Promise.all([
+    UserReport.find(filter)
+      .populate(userReportPopulate)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    UserReport.countDocuments(filter),
+  ]);
+
+  return success(
+    res,
+    {
+      limit,
+      page,
+      pages: total ? Math.ceil(total / limit) : 0,
+      records,
+      total,
+    },
+    "User reports loaded",
+  );
+});
+
+exports.userReportDetail = asyncHandler(async (req, res) => {
+  const report = await UserReport.findById(req.params.id).populate(userReportPopulate);
+  if (!report) throw httpError(404, "User report not found");
+
+  return success(res, { report }, "User report loaded");
+});
+
+exports.resolveUserReport = asyncHandler(async (req, res) => {
+  const report = await resolveUserReport({
+    note: req.body.note,
+    outcome: req.body.outcome,
+    reportId: req.params.id,
+    resolverId: req.user.id,
+  });
+
+  return success(
+    res,
+    { report },
+    req.body.outcome === "dismissed" ? "Report dismissed" : "Report resolved",
   );
 });

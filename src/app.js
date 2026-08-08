@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const kycRoutes = require("./routes/kycRoutes");
@@ -12,6 +13,8 @@ const searchRoutes = require("./routes/searchRoutes");
 const communityRoutes = require("./routes/communityRoutes");
 const favoriteRoutes = require("./routes/favoriteRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
+const blockRoutes = require("./routes/blockRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
@@ -46,6 +49,14 @@ app.get("/api/health", (req, res) => {
   return success(res, { service: "thrift-marketplace-api" }, "API is running");
 });
 
+app.get("/api/health/ready", (req, res) => {
+  const dbConnected = mongoose.connection.readyState === 1;
+  const data = { db: dbConnected ? "connected" : "unavailable", service: "thrift-marketplace-api" };
+
+  if (!dbConnected) return error(res, "Database is not connected", 503, data);
+  return success(res, data, "Service is ready");
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/kyc", kycRoutes);
@@ -58,6 +69,8 @@ app.use("/api/search", searchRoutes);
 app.use("/api/community", communityRoutes);
 app.use("/api/favorites", favoriteRoutes);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/blocks", blockRoutes);
+app.use("/api/reports", reportRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/recommendations", recommendationRoutes);

@@ -4,8 +4,11 @@
 @emailVerifyToken = paste_email_verify_token_here
 @resetToken = paste_reset_token_here
 
-### Health check
+### Health check (liveness - process is up)
 GET {{baseUrl}}/health
+
+### Readiness check (fails 503 until MongoDB is connected)
+GET {{baseUrl}}/health/ready
 
 ### Register
 POST {{baseUrl}}/auth/register
