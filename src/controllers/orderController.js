@@ -1061,7 +1061,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       };
     });
 
-    const orders = await Order.create(documents, { session });
+    const orders = await Order.create(documents, { ordered: true, session });
     for (const order of orders) {
       if (order.bargainIds?.length) {
         await Bargain.updateMany(
@@ -1087,7 +1087,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
           settlementStatus: order.settlementStatus,
         },
       })),
-      { session },
+      { ordered: true, session },
     );
     return orders;
   });
