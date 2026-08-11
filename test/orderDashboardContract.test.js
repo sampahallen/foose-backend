@@ -157,6 +157,128 @@ test("seller summary counts the full active predicate and sums only released rev
   });
 });
 
+test("buying summary counts needs_action, in_progress, and under_review in one aggregation, excluding history", async () => {
+  const originalAggregate = Order.aggregate;
+  const buyerId = new mongoose.Types.ObjectId();
+  let pipeline;
+
+  Order.aggregate = async (value) => {
+    pipeline = value;
+    return [
+      {
+        inProgress: [{ count: 4 }],
+        needsAction: [{ count: 2 }],
+        underReview: [{ count: 1 }],
+      },
+    ];
+  };
+
+  let result;
+  try {
+    result = await invokeController(orderController.getBuyingOrdersSummary, {
+      query: {},
+      user: { id: buyerId.toString() },
+    });
+  } finally {
+    Order.aggregate = originalAggregate;
+  }
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.data.needsActionCount, 2);
+  assert.equal(result.payload.data.inProgressCount, 4);
+  assert.equal(result.payload.data.underReviewCount, 1);
+  assert.match(result.payload.data.serverNow, /^\d{4}-\d{2}-\d{2}T/);
+
+  assert.deepEqual(pipeline[0].$match, {
+    buyerId,
+    $and: [
+      {
+        $or: [
+          { checkoutCancelledAt: null },
+          {
+            settlementStatus: {
+              $in: ["refund_pending", "refund_attention", "refund_failed", "refunded"],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const facet = pipeline[1].$facet;
+  // The needs-action deadline clauses embed a live `now`; pull it out once so
+  // it can be compared against the wall clock and reused to build the exact
+  // expected shape below, rather than tautologically diffing a field against
+  // itself.
+  const now = facet.needsAction[0].$match.$or[1].sellerActionDeadline.$lte;
+  assert.ok(now instanceof Date);
+  assert.ok(Math.abs(Date.now() - now.getTime()) < 5000);
+
+  const needsActionClauses = [
+    {
+      "delivery.method": "shop_pickup",
+      fulfillmentStatus: "awaiting_seller",
+      settlementStatus: "cash_due",
+    },
+    {
+      fulfillmentStatus: "awaiting_seller",
+      sellerActionDeadline: { $lte: now },
+      settlementStatus: "held",
+    },
+    {
+      "delivery.method": "shop_pickup",
+      fulfillmentStatus: "ready_for_pickup",
+      pickupExpiresAt: { $gt: now },
+      settlementStatus: "held",
+    },
+    {
+      "delivery.method": { $in: ["station_pickup", "airport_to_airport"] },
+      deliveryReleaseAt: { $gt: now },
+      fulfillmentStatus: "in_transit",
+      settlementStatus: "held",
+    },
+  ];
+  assert.deepEqual(facet.needsAction[0].$match, {
+    activeReportId: null,
+    $or: needsActionClauses,
+  });
+  assert.deepEqual(facet.underReview[0].$match, {
+    $or: [
+      { activeReportId: { $ne: null } },
+      { settlementStatus: { $in: ["refund_attention", "refund_failed"] } },
+    ],
+  });
+  assert.deepEqual(facet.inProgress[0].$match, {
+    $or: [
+      { settlementStatus: "refund_pending" },
+      {
+        activeReportId: null,
+        fulfillmentStatus: { $in: ["awaiting_seller", "ready_for_pickup", "in_transit"] },
+        $nor: needsActionClauses,
+      },
+    ],
+  });
+  assert.equal(facet.needsAction[1].$count, "count");
+  assert.equal(facet.inProgress[1].$count, "count");
+  assert.equal(facet.underReview[1].$count, "count");
+  assert.equal(pipeline.length, 2, "history has no facet branch and is never queried");
+});
+
+test("buying summary route is registered before the dynamic order detail route", () => {
+  const summaryIndex = orderRoutes.stack.findIndex(
+    (layer) =>
+      layer.route?.path === "/me/buying/summary" &&
+      layer.route.methods.get,
+  );
+  const detailIndex = orderRoutes.stack.findIndex(
+    (layer) => layer.route?.path === "/:id" && layer.route.methods.get,
+  );
+
+  assert.ok(summaryIndex >= 0);
+  assert.ok(detailIndex >= 0);
+  assert.ok(summaryIndex < detailIndex);
+});
+
 test("order confirmation lookup accepts every possible seller order from a 100-item checkout", async () => {
   const originalFind = Order.find;
   const captured = [];

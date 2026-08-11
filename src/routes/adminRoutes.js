@@ -130,6 +130,18 @@ router.put(
 router.get("/listings/flagged", isSuperAdmin, controller.flaggedListings);
 router.delete("/listings/:id", isSuperAdmin, controller.removeListing);
 router.get("/disputes", canResolveDisputes, controller.disputes);
+router.get(
+  "/disputes/:orderId/bargains",
+  canResolveDisputes,
+  validate(
+    z.object({
+      body: z.any().optional(),
+      params: z.object({ orderId: z.string().regex(/^[a-f\d]{24}$/i, "Provide a valid order id") }),
+      query: z.object({}),
+    }),
+  ),
+  controller.orderBargains,
+);
 router.put(
   "/disputes/:orderId/resolve",
   canResolveDisputes,

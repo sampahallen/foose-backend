@@ -1,51 +1,11 @@
 const Message = require("../models/Message");
-const { makeConversationId } = require("../controllers/chatController");
+const {
+  makeConversationId,
+  messagePopulate,
+  parseConversationParticipants,
+  participantFilter,
+} = require("../services/chatThreadService");
 const { chatUserRoom } = require("./rooms");
-
-const parseConversationParticipants = (conversationId = "") => {
-  const [firstId, secondId, suffix] = String(conversationId).split("_");
-  if (suffix !== "general") return null;
-  return firstId && secondId ? [firstId, secondId] : null;
-};
-
-const idValue = (value) => {
-  if (!value) return "";
-  if (value._id) return value._id.toString();
-  return value.toString();
-};
-
-const participantFilter = (conversationId, userId) => {
-  const participants = parseConversationParticipants(conversationId);
-  if (!participants || !participants.includes(userId)) {
-    return {
-      conversationId,
-      $or: [{ senderId: userId }, { receiverId: userId }],
-    };
-  }
-
-  const [firstId, secondId] = participants;
-  return {
-    $or: [
-      { senderId: firstId, receiverId: secondId },
-      { senderId: secondId, receiverId: firstId },
-    ],
-  };
-};
-
-const messagePopulate = (userSelect = "name username profilePhoto") => [
-  { path: "senderId", select: userSelect },
-  { path: "receiverId", select: userSelect },
-  { path: "listingId", select: "title images price currency" },
-  { path: "reactions.userId", select: "name username profilePhoto" },
-  {
-    path: "replyTo",
-    select: "content attachments listingId senderId createdAt",
-    populate: [
-      { path: "senderId", select: "name username profilePhoto" },
-      { path: "listingId", select: "title images price currency" },
-    ],
-  },
-];
 
 const resolveReceiver = async ({ conversationId, receiverId, userId }) => {
   if (!conversationId) return receiverId;

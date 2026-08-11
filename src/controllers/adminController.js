@@ -1,3 +1,4 @@
+const Bargain = require("../models/Bargain");
 const DigiShop = require("../models/DigiShop");
 const FinspoComment = require("../models/FinspoComment");
 const GalleryPost = require("../models/GalleryPost");
@@ -655,6 +656,30 @@ exports.disputes = asyncHandler(async (req, res) => {
     },
     "Order reports loaded",
   );
+});
+
+// Read-only bargain history for a disputed order. The offer ladder is evidence:
+// it shows what each side asked for and who agreed to the final price.
+exports.orderBargains = asyncHandler(async (req, res) => {
+  const order = await Order.findById(req.params.orderId).select("bargainIds items");
+  if (!order) throw httpError(404, "Order not found");
+
+  const bargainIds = [
+    ...new Set(
+      [...(order.bargainIds || []), ...(order.items || []).map((item) => item.bargainId)]
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
+  if (!bargainIds.length) return success(res, { bargains: [] }, "Bargains loaded");
+
+  const bargains = await Bargain.find({ _id: { $in: bargainIds } })
+    .populate("listingId", "title images price currency")
+    .populate("buyerId", "name email username")
+    .populate("sellerId", "name email username")
+    .sort({ createdAt: 1 });
+
+  return success(res, { bargains }, "Bargains loaded");
 });
 
 exports.resolveDispute = asyncHandler(async (req, res) => {

@@ -10,6 +10,12 @@ const { listingImages } = require("../middleware/uploadMiddleware");
 
 const router = express.Router();
 
+// The listing form is multipart, so booleans arrive as strings and
+// `z.coerce.boolean()` would read "false" as true.
+const zBooleanish = z
+  .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+  .transform((value) => value === true || value === "true" || value === "1");
+
 const listingBody = z.object({
   title: z.string().min(2).optional(),
   description: z.string().max(500).optional(),
@@ -54,6 +60,8 @@ const listingBody = z.object({
   quantity: z.coerce.number().int().positive().optional(),
   bulkMinQty: z.coerce.number().int().positive().optional(),
   bulkWeight: z.string().optional(),
+  bargainingAllowed: zBooleanish.optional(),
+  minAcceptablePrice: z.coerce.number().int().nonnegative().optional(),
   keptImages: z.any().optional(),
   keptImagesTouched: z.any().optional(),
   volumeDiscounts: z.any().optional(),
@@ -118,6 +126,8 @@ router.post(
         title: z.string().min(2),
         type: z.enum(["retail", "wholesale"]),
         price: z.coerce.number().int().nonnegative(),
+        // Sellers have to make a deliberate call on haggling at post time.
+        bargainingAllowed: zBooleanish,
       }),
       params: z.object({}),
       query: z.object({}),

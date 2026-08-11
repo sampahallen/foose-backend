@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const mongoose = require("mongoose");
+const Bargain = require("../models/Bargain");
 const DigiShop = require("../models/DigiShop");
 const Listing = require("../models/Listing");
 const Order = require("../models/Order");
@@ -21,8 +22,15 @@ const { normalizePhone } = require("../utils/phone");
 const { invalidate } = require("../utils/cache");
 const {
   AIRPORT_COURIER,
+  COURIER_METHODS,
   STATION_PICKUP_COMPANIES,
 } = require("../constants/delivery");
+const { estimateBusFarePesewas } = require("../constants/intercityBusFareEstimates");
+const {
+  isInterCityCourierPossibleFrom,
+  isIntraCityCourierPossibleFrom,
+} = require("../constants/doorToDoorCourierProviders");
+const { getInterCityQuote, getIntraCityQuotes } = require("../services/deliveryPricingService");
 const {
   destinationsForOrigin: twoMExpressDestinationsForOrigin,
   isValidDestination: isValidTwoMExpressDestination,
@@ -42,6 +50,11 @@ const {
 } = require("../services/paystackService");
 const { awardPurchaseForOrder } = require("../services/recommendationService");
 const {
+  closeBargainsForListing,
+  releaseBargainsForOrder,
+} = require("../services/bargainService");
+const { resolveLinePrice } = require("../services/bargainRules");
+const {
   runSearchSync,
   syncListingSearchDocument,
 } = require("../services/searchIndexService");
@@ -51,6 +64,7 @@ const {
   completeCashPickup,
   confirmCollection,
   confirmReceipt,
+  dispatchCourierOrder,
   dispatchOrder,
   loadParticipantOrder,
   markPaymentTransactionPaid,
@@ -97,6 +111,8 @@ const resolveDestination = (req, entry = {}) => {
   }
 
   return {
+    deliveryAddress: asTrimmed(destination.deliveryAddress, 300),
+    deliveryNote: asTrimmed(destination.deliveryNote, 500),
     preferredTerminal: asTrimmed(destination.preferredTerminal, 240),
     recipientName: asTrimmed(
       destination.recipientName || req.currentUser?.name || req.user?.username,
@@ -107,18 +123,24 @@ const resolveDestination = (req, entry = {}) => {
       40,
     ),
     region: asTrimmed(destination.region || legacyAddress.region, 120),
+    secondAddress: asTrimmed(destination.secondAddress, 300),
     town: asTrimmed(destination.town || legacyAddress.city || legacyAddress.street, 160),
   };
 };
 
-const validateDestination = (destination) => {
+const validateDestination = (destination, method) => {
   if (!destination.recipientName) throw httpError(422, "Recipient name is required");
   if (!destination.recipientPhone) throw httpError(422, "Recipient phone is required");
   if (!destination.region) throw httpError(422, "Destination region is required");
   if (!destination.town) throw httpError(422, "Destination town is required");
+  if (COURIER_METHODS.includes(method) && !destination.deliveryAddress) {
+    throw httpError(422, "Delivery address is required for door-to-door courier");
+  }
 };
 
 const normalizedCheckoutDestination = (destination = {}) => ({
+  deliveryAddress: asTrimmed(destination.deliveryAddress, 300),
+  deliveryNote: asTrimmed(destination.deliveryNote, 500),
   preferredTerminal: asTrimmed(destination.preferredTerminal, 240),
   recipientName: asTrimmed(
     destination.recipientName || destination.recipient?.name,
@@ -129,10 +151,11 @@ const normalizedCheckoutDestination = (destination = {}) => ({
     40,
   ),
   region: asTrimmed(destination.region, 120),
+  secondAddress: asTrimmed(destination.secondAddress, 300),
   town: asTrimmed(destination.town, 160),
 });
 
-const checkoutRequestHashFor = ({ deliveryByShop, items, paymentMethod }) => {
+const checkoutRequestHashFor = ({ bargains, deliveryByShop, items, paymentMethod }) => {
   const quantities = new Map();
   for (const item of items || []) {
     const listingId = String(
@@ -154,15 +177,27 @@ const checkoutRequestHashFor = ({ deliveryByShop, items, paymentMethod }) => {
             ? normalizedCheckoutDestination(entry?.destination)
             : null,
         method: entry?.method || null,
+        provider: entry?.provider || null,
       },
     ])
     .sort(([left], [right]) => left.localeCompare(right));
+  // Negotiated prices are part of the request's identity. Without them a buyer
+  // could replay an old Idempotency-Key after renegotiating and silently be
+  // served the stale price.
+  const normalizedBargains = (bargains || [])
+    .map((bargain) => ({
+      amount: Number(bargain.amount),
+      listingId: String(bargain.listingId?._id || bargain.listingId || "").toLowerCase(),
+    }))
+    .filter((bargain) => bargain.listingId && Number.isFinite(bargain.amount))
+    .sort((left, right) => left.listingId.localeCompare(right.listingId));
   const canonical = {
     deliveryByShop: normalizedDeliveryByShop,
     items: [...quantities.entries()]
       .map(([listingId, quantity]) => ({ listingId, quantity }))
       .sort((left, right) => left.listingId.localeCompare(right.listingId)),
     paymentMethod,
+    ...(normalizedBargains.length ? { bargains: normalizedBargains } : {}),
   };
   return crypto
     .createHash("sha256")
@@ -347,6 +382,10 @@ const rollbackUnpaidOrders = async (orderIds, now = new Date()) => {
     restored.flatMap((order) => order.items.map((item) => item.listingId)),
     "checkout-rollback",
   );
+  // The stock came back, so the buyer gets their agreed price back too.
+  for (const order of restored) {
+    await releaseBargainsForOrder(order._id).catch(() => undefined);
+  }
 };
 
 const checkoutProviderReference = (buyerId, checkoutKey) =>
@@ -464,18 +503,22 @@ exports.getCheckoutDeliveryOptions = asyncHandler(async (req, res) => {
 
   const shops = await DigiShop.find({ _id: { $in: shopIds } }).select("shopName location");
 
-  const stopOption = (stop) => ({
-    label: stop.terminal ? `${stop.town} (${stop.terminal})` : stop.town,
-    region: stop.region,
-    terminal: stop.terminal,
-    town: stop.town,
-  });
-
   const options = shops.map((shop) => {
+    const stopOption = (stop) => ({
+      estimatedFeePesewas: estimateBusFarePesewas(shop.location, stop),
+      label: stop.terminal ? `${stop.town} (${stop.terminal})` : stop.town,
+      region: stop.region,
+      terminal: stop.terminal,
+      town: stop.town,
+    });
     const twoMExpressDestinations = twoMExpressDestinationsForOrigin(shop.location);
     const intercityStcDestinations = intercityStcDestinationsForOrigin(shop.location);
     const vipJeounDestinations = vipJeounDestinationsForOrigin(shop.location);
     return {
+      courier: {
+        interCityPossible: isInterCityCourierPossibleFrom(shop.location?.region),
+        intraCityPossible: isIntraCityCourierPossibleFrom(shop.location?.region),
+      },
       intercityStc: {
         destinations: intercityStcDestinations.map(stopOption),
         eligible: intercityStcDestinations.length > 0,
@@ -495,6 +538,30 @@ exports.getCheckoutDeliveryOptions = asyncHandler(async (req, res) => {
   });
 
   return success(res, { shops: options }, "Checkout delivery options loaded");
+});
+
+// Live door-to-door courier pricing for a buyer's freely-chosen region/town,
+// as opposed to the fixed bus-stop list above. Read-only, no persistence -
+// the buyer's choice is only saved when they place the order.
+exports.getCheckoutDeliveryQuote = asyncHandler(async (req, res) => {
+  const shop = await DigiShop.findById(req.query.shopId).select("location");
+  if (!shop) throw httpError(404, "Shop not found");
+
+  const quoteInput = {
+    buyerRegion: asTrimmed(req.query.region, 120),
+    buyerTown: asTrimmed(req.query.town, 160),
+    sellerRegion: shop.location?.region || "",
+    sellerTown: shop.location?.city || "",
+  };
+
+  return success(
+    res,
+    {
+      interCity: getInterCityQuote(quoteInput),
+      intraCity: getIntraCityQuotes(quoteInput),
+    },
+    "Delivery quote loaded",
+  );
 });
 
 exports.placeOrder = asyncHandler(async (req, res) => {
@@ -518,7 +585,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     const entry = deliveryByShop[shopId] || {};
     const method = entry.method || "station_pickup";
     const destination = resolveDestination(req, entry);
-    if (method !== "shop_pickup") validateDestination(destination);
+    if (method !== "shop_pickup") validateDestination(destination, method);
 
     let company = "";
     if (method === "station_pickup") {
@@ -530,11 +597,18 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       company = AIRPORT_COURIER;
     }
 
+    let provider = "";
+    if (COURIER_METHODS.includes(method)) {
+      provider = asTrimmed(entry.provider, 40);
+      if (!provider) throw httpError(422, "Choose a delivery provider");
+    }
+
     resolvedDeliveryByShop[shopId] = {
       address: entry.address,
       company,
       destination,
       method,
+      provider,
     };
   }
 
@@ -559,7 +633,30 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     quantityByListing.set(listingId, (quantityByListing.get(listingId) || 0) + quantity);
   }
   const listingIds = [...quantityByListing.keys()];
+
+  // The buyer's accepted bargains decide what they pay, so they are read before
+  // the request hash and reused for the order lines below. Nothing about the
+  // price ever comes from the request body.
+  // Malformed ids are left for the listing lookup below to reject, so the
+  // buyer still gets the usual "unavailable listing" answer.
+  const bargainableListingIds = listingIds.filter((listingId) =>
+    mongoose.Types.ObjectId.isValid(listingId));
+  const acceptedBargains = bargainableListingIds.length
+    ? await Bargain.find({
+        buyerId: req.user.id,
+        listingId: { $in: bargainableListingIds },
+        status: "accepted",
+      })
+    : [];
+  const bargainByListing = new Map(
+    acceptedBargains.map((bargain) => [String(bargain.listingId), bargain]),
+  );
+
   const checkoutRequestHash = checkoutRequestHashFor({
+    bargains: acceptedBargains.map((bargain) => ({
+      amount: bargain.agreedPrice,
+      listingId: bargain.listingId,
+    })),
     deliveryByShop: resolvedDeliveryByShop,
     items: [...quantityByListing.entries()].map(([listingId, quantity]) => ({
       listingId,
@@ -600,6 +697,11 @@ exports.placeOrder = asyncHandler(async (req, res) => {
       const existingRequestHash =
         persistedHashes[0] ||
         checkoutRequestHashFor({
+          bargains: existing.flatMap((order) =>
+            (order.items || [])
+              .filter((item) => item.bargainId)
+              .map((item) => ({ amount: item.price, listingId: item.listingId })),
+          ),
           deliveryByShop: Object.fromEntries(
             existing.map((order) => [
               String(order.shopId?._id || order.shopId),
@@ -613,6 +715,7 @@ exports.placeOrder = asyncHandler(async (req, res) => {
                       order.delivery?.address?.street,
                   },
                 method: order.delivery?.method,
+                provider: order.delivery?.provider || null,
               },
             ]),
           ),
@@ -797,10 +900,16 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     if (Number(listing.quantity) < quantity) {
       throw httpError(409, `${listing.title} does not have enough stock`);
     }
+    // Bargained amounts are a unit price, so a wholesale deal applies to every
+    // unit in the line.
+    const bargain = bargainByListing.get(String(listing._id));
+    const unitPrice = resolveLinePrice(listing, bargain);
     return {
+      bargain,
       listing,
       quantity,
-      subtotalAmount: Number(listing.price) * quantity,
+      subtotalAmount: unitPrice * quantity,
+      unitPrice,
     };
   });
 
@@ -835,6 +944,29 @@ exports.placeOrder = asyncHandler(async (req, res) => {
         );
       }
     }
+
+    if (delivery.method === "station_pickup") {
+      delivery.estimatedFeePesewas = estimateBusFarePesewas(group.shop.location, delivery.destination);
+    } else if (COURIER_METHODS.includes(delivery.method)) {
+      const quoteInput = {
+        buyerRegion: delivery.destination.region,
+        buyerTown: delivery.destination.town,
+        sellerRegion: group.shop.location?.region,
+        sellerTown: group.shop.location?.city,
+      };
+      const quotes =
+        delivery.method === "intra_city_courier"
+          ? getIntraCityQuotes(quoteInput)
+          : [getInterCityQuote(quoteInput)].filter(Boolean);
+      const matched = quotes.find((quote) => quote.providerId === delivery.provider);
+      if (!matched) {
+        throw httpError(
+          422,
+          `${delivery.provider || "This delivery provider"} does not serve this route for ${group.shop.shopName || "this seller"}`,
+        );
+      }
+      delivery.estimatedFeePesewas = matched.feePesewas;
+    }
   }
   const buyer = await User.findById(req.user.id);
   if (!buyer) throw httpError(401, "Buyer account is unavailable");
@@ -862,6 +994,19 @@ exports.placeOrder = asyncHandler(async (req, res) => {
           { session },
         );
       }
+
+      // Spend the agreed price in the same transaction as the stock it pays
+      // for, so a bargain can never be used twice.
+      if (line.bargain) {
+        const consumed = await Bargain.findOneAndUpdate(
+          { _id: line.bargain._id, buyerId: req.user.id, status: "accepted" },
+          { $set: { consumedAt: now, isActive: false, status: "consumed" } },
+          { new: true, session },
+        );
+        if (!consumed) {
+          throw httpError(409, `Your agreed price for ${line.listing.title} is no longer available`);
+        }
+      }
     }
 
     const documents = groups.map((group, groupIndex) => {
@@ -881,15 +1026,20 @@ exports.placeOrder = asyncHandler(async (req, res) => {
           address: delivery.address,
           company: delivery.company || undefined,
           destination: delivery.method !== "shop_pickup" ? delivery.destination : undefined,
+          estimatedFeePesewas: delivery.estimatedFeePesewas,
           fee: deliveryFee,
           method: delivery.method,
+          provider: delivery.provider || undefined,
         },
         deliveryFee,
         escrowStatus: "not_held",
         fulfillmentStatus: "awaiting_seller",
+        bargainIds: group.lines.map((line) => line.bargain?._id).filter(Boolean),
         items: group.lines.map((line) => ({
+          bargainId: line.bargain?._id,
+          listPrice: line.listing.price,
           listingId: line.listing._id,
-          price: line.listing.price,
+          price: line.unitPrice,
           quantity: line.quantity,
           title: line.listing.title,
         })),
@@ -912,6 +1062,15 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     });
 
     const orders = await Order.create(documents, { session });
+    for (const order of orders) {
+      if (order.bargainIds?.length) {
+        await Bargain.updateMany(
+          { _id: { $in: order.bargainIds } },
+          { $set: { consumedByOrderId: order._id } },
+          { session },
+        );
+      }
+    }
     await OrderEvent.create(
       orders.map((order) => ({
         actorId: req.user.id,
@@ -939,6 +1098,22 @@ exports.placeOrder = asyncHandler(async (req, res) => {
     ...groups.map((group) => `shop:${group.shop._id}:listings`),
     ...listingIds.map((listingId) => `listing:${listingId}`),
   );
+
+  // Whoever pays first takes the item, so once a listing is gone every other
+  // buyer still negotiating on it is told the deal is off. Runs after the
+  // transaction because it writes chat messages and emits sockets.
+  const soldOut = await Listing.find({
+    _id: { $in: listingIds },
+    status: { $ne: "active" },
+  })
+    .select("_id")
+    .lean();
+  for (const listing of soldOut) {
+    await closeBargainsForListing({
+      listingId: listing._id,
+      reason: "listing_unavailable",
+    }).catch(() => undefined);
+  }
 
   if (paymentMethod === "cash_on_pickup") {
     for (const order of createdOrders) {
@@ -1280,6 +1455,60 @@ exports.getBuyingOrders = asyncHandler(async (req, res) => {
   return success(res, page, "Buying orders loaded");
 });
 
+// Per-bucket counts for the buyer order tabs. Cheap aggregation (counts only,
+// no document hydration) so the tab bar can show live badges without paying
+// for a full page fetch of every bucket. History is intentionally excluded —
+// nothing there needs the buyer's attention.
+exports.getBuyingOrdersSummary = asyncHandler(async (req, res) => {
+  const serverNow = new Date();
+  const baseMatch = {
+    buyerId: new mongoose.Types.ObjectId(req.user.id),
+    $and: [
+      {
+        $or: [
+          { checkoutCancelledAt: null },
+          {
+            settlementStatus: {
+              $in: ["refund_pending", "refund_attention", "refund_failed", "refunded"],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const [summary] = await Order.aggregate([
+    { $match: baseMatch },
+    {
+      $facet: {
+        inProgress: [
+          { $match: queryForBucket("in_progress", { buyer: true, now: serverNow }) },
+          { $count: "count" },
+        ],
+        needsAction: [
+          { $match: queryForBucket("needs_action", { buyer: true, now: serverNow }) },
+          { $count: "count" },
+        ],
+        underReview: [
+          { $match: queryForBucket("under_review", { buyer: true, now: serverNow }) },
+          { $count: "count" },
+        ],
+      },
+    },
+  ]);
+
+  return success(
+    res,
+    {
+      inProgressCount: summary?.inProgress?.[0]?.count || 0,
+      needsActionCount: summary?.needsAction?.[0]?.count || 0,
+      serverNow: serverNow.toISOString(),
+      underReviewCount: summary?.underReview?.[0]?.count || 0,
+    },
+    "Buying order summary loaded",
+  );
+});
+
 exports.getSellingOrders = asyncHandler(async (req, res) => {
   const shop = await DigiShop.findOne({ ownerId: req.user.id }).select("_id");
   if (!shop) {
@@ -1456,13 +1685,14 @@ exports.dispatch = sendActionResult({
     if (!/^0\d{9}$/.test(driverPhone)) {
       throw httpError(422, "Enter a valid 10-digit driver phone number");
     }
-    const parcelNumber = asTrimmed(req.body.parcelNumber, 120);
+    const busNumber = asTrimmed(req.body.busNumber, 120);
     const order = await dispatchOrder({
+      amount: req.body.amount,
       billImage,
+      busNumber,
       driverPhone,
       idempotencyKey: idempotencyKeyFor(req),
       orderId: req.params.id,
-      parcelNumber,
       userId: req.user.id,
     });
     req.committedPrivateKeys = [
@@ -1471,6 +1701,17 @@ exports.dispatch = sendActionResult({
     ];
     return order;
   },
+  success: "Order marked as sent",
+});
+
+exports.dispatchCourier = sendActionResult({
+  handler: (req) =>
+    dispatchCourierOrder({
+      idempotencyKey: idempotencyKeyFor(req),
+      orderId: req.params.id,
+      trackingLink: asTrimmed(req.body.trackingLink, 500),
+      userId: req.user.id,
+    }),
   success: "Order marked as sent",
 });
 
@@ -1624,3 +1865,6 @@ exports.confirmDelivery = asyncHandler(async (req, res, next) => {
 exports.raiseDispute = asyncHandler(async (_req, _res) => {
   throw httpError(410, "Reason-only disputes were retired; use the guided order report");
 });
+
+// Exported for tests: the checkout replay guard is worth pinning down directly.
+exports.checkoutRequestHashFor = checkoutRequestHashFor;

@@ -75,7 +75,7 @@ const ATTRIBUTE_OPTIONS = {
   ]),
   fit: new Set(["slim", "regular", "relaxed", "oversized", "tailored"]),
   pattern: new Set(["solid", "striped", "checked", "floral", "graphic", "animal", "geometric", "traditional-print", "other"]),
-  baleGrade: new Set(["premium", "grade-a", "grade-b", "mixed"]),
+  baleGrade: new Set(["premium", "grade-a", "grade-b", "mixed", "wiper"]),
 };
 
 const LISTING_ATTRIBUTE_KEYS = Object.keys(ATTRIBUTE_OPTIONS);

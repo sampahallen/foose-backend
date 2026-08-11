@@ -24,15 +24,21 @@ function mockListingFind({ receivedCalls, results = [] }) {
   return (filter) => {
     receivedCalls.filter = filter;
     return {
-      sort(sort) {
-        receivedCalls.sort = sort;
+      // The seller's own listings come back with their private bargaining floor.
+      select(select) {
+        receivedCalls.select = select;
         return {
-          skip(skip) {
-            receivedCalls.skip = skip;
+          sort(sort) {
+            receivedCalls.sort = sort;
             return {
-              limit(limit) {
-                receivedCalls.limit = limit;
-                return { lean: async () => results };
+              skip(skip) {
+                receivedCalls.skip = skip;
+                return {
+                  limit(limit) {
+                    receivedCalls.limit = limit;
+                    return { lean: async () => results };
+                  },
+                };
               },
             };
           },

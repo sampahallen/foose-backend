@@ -20,9 +20,19 @@ const orderItemSchema = new Schema(
       trim: true,
       default: "",
     },
+    // What the buyer actually pays per unit, in pesewas. Equals `listPrice`
+    // unless they had an accepted bargain on this listing.
     price: {
       type: Number,
       min: 0,
+    },
+    listPrice: {
+      type: Number,
+      min: 0,
+    },
+    bargainId: {
+      type: Schema.Types.ObjectId,
+      ref: "Bargain",
     },
     quantity: {
       type: Number,
@@ -163,6 +173,13 @@ const orderSchema = new Schema(
       default: "pending",
       index: true,
     },
+    // Every bargain spent on this order, for admin dispute review.
+    bargainIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Bargain",
+      },
+    ],
     escrowStatus: {
       type: String,
       enum: ["not_held", "held", "released", "refunded"],
@@ -323,6 +340,31 @@ const orderSchema = new Schema(
         type: Number,
         min: 0,
       },
+      // Informational-only distance-based estimate (courier providers or bus
+      // transit) shown to buyer/seller for planning. Never folded into
+      // `fee`/`deliveryFee`/`totalAmount` — those stay whatever was actually
+      // charged (currently always 0 for every delivery method).
+      estimatedFeePesewas: {
+        type: Number,
+        min: 0,
+      },
+      // Door-to-door courier provider id (bolt_send | yango_delivery |
+      // shaq_express) for intra_city_courier/inter_city_courier orders.
+      provider: {
+        type: String,
+        trim: true,
+        maxlength: 40,
+        default: "",
+      },
+      // Tracking URL the seller pastes in from the Bolt/Yango/ShaQ app after
+      // booking, for the two courier methods. Bus/airport methods keep using
+      // `transit`/`trackingInfo` below.
+      trackingLink: {
+        type: String,
+        trim: true,
+        maxlength: 500,
+        default: "",
+      },
       destination: {
         recipientName: {
           type: String,
@@ -354,6 +396,25 @@ const orderSchema = new Schema(
           maxlength: 240,
           default: "",
         },
+        // Courier-method-only buyer input (intra_city_courier/inter_city_courier).
+        deliveryAddress: {
+          type: String,
+          trim: true,
+          maxlength: 300,
+          default: "",
+        },
+        secondAddress: {
+          type: String,
+          trim: true,
+          maxlength: 300,
+          default: "",
+        },
+        deliveryNote: {
+          type: String,
+          trim: true,
+          maxlength: 500,
+          default: "",
+        },
       },
       transit: {
         serviceName: {
@@ -368,11 +429,18 @@ const orderSchema = new Schema(
           maxlength: 40,
           default: "",
         },
-        parcelNumber: {
+        busNumber: {
           type: String,
           trim: true,
           maxlength: 120,
           default: "",
+        },
+        // The transit fee the buyer must pay to collect the parcel, in
+        // pesewas. Informational only — never folded into totalAmount, which
+        // stays exactly what the buyer was charged at checkout.
+        amount: {
+          type: Number,
+          min: 0,
         },
         cargoTrackingNumber: {
           type: String,

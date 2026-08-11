@@ -9,7 +9,7 @@ const {
   orderReportEvidence,
 } = require("../middleware/uploadMiddleware");
 const validate = require("../middleware/validateMiddleware");
-const { STATION_PICKUP_COMPANIES } = require("../constants/delivery");
+const { COURIER_METHODS, STATION_PICKUP_COMPANIES } = require("../constants/delivery");
 
 const router = express.Router();
 
@@ -21,8 +21,18 @@ const emptyActionSchema = z.object({
 
 const dispatchActionSchema = z.object({
   body: z.object({
+    // Pesewas, coerced since this arrives as a multipart form field.
+    amount: z.coerce.number().int().positive(),
+    busNumber: z.string().trim().min(1).max(120),
     driverPhone: z.string().trim().min(7).max(40),
-    parcelNumber: z.string().trim().max(120).optional().default(""),
+  }).strict(),
+  params: z.object({ id: z.string().min(1) }),
+  query: z.object({}),
+});
+
+const courierDispatchActionSchema = z.object({
+  body: z.object({
+    trackingLink: z.string().trim().url().max(500),
   }).strict(),
   params: z.object({ id: z.string().min(1) }),
   query: z.object({}),
@@ -52,16 +62,20 @@ router.post(
                 company: z.string().trim().max(160).optional(),
                 destination: z
                   .object({
+                    deliveryAddress: z.string().trim().max(300).optional(),
+                    deliveryNote: z.string().trim().max(500).optional(),
                     preferredTerminal: z.string().trim().max(240).optional(),
                     recipientName: z.string().trim().min(2).max(160),
                     recipientPhone: z.string().trim().min(7).max(40),
                     region: z.string().trim().min(2).max(120),
+                    secondAddress: z.string().trim().max(300).optional(),
                     town: z.string().trim().min(2).max(160),
                   })
                   .optional(),
                 method: z
-                  .enum(["station_pickup", "shop_pickup", "airport_to_airport"])
+                  .enum(["station_pickup", "shop_pickup", "airport_to_airport", ...COURIER_METHODS])
                   .optional(),
+                provider: z.string().trim().max(40).optional(),
               }),
             )
             .refine((byShop) => Object.keys(byShop).length > 0, {
@@ -106,6 +120,22 @@ router.post(
                 path: ["deliveryByShop", shopId, "company"],
               });
             }
+            if (COURIER_METHODS.includes(method)) {
+              if (!entry.destination?.deliveryAddress?.trim()) {
+                context.addIssue({
+                  code: "custom",
+                  message: "Delivery address is required for door-to-door courier",
+                  path: ["deliveryByShop", shopId, "destination", "deliveryAddress"],
+                });
+              }
+              if (!entry.provider?.trim()) {
+                context.addIssue({
+                  code: "custom",
+                  message: "Choose a delivery provider",
+                  path: ["deliveryByShop", shopId, "provider"],
+                });
+              }
+            }
           }
         }),
       params: z.object({}),
@@ -127,8 +157,25 @@ router.get(
   ),
   controller.getCheckoutDeliveryOptions,
 );
+router.get(
+  "/checkout/delivery-quote",
+  auth,
+  validate(
+    z.object({
+      body: z.object({}).optional(),
+      params: z.object({}),
+      query: z.object({
+        region: z.string().trim().min(1),
+        shopId: z.string().trim().min(1),
+        town: z.string().trim().min(1),
+      }),
+    }),
+  ),
+  controller.getCheckoutDeliveryQuote,
+);
 router.get("/", auth, controller.getOrdersByIds);
 router.get("/me/buying", auth, controller.getBuyingOrders);
+router.get("/me/buying/summary", auth, controller.getBuyingOrdersSummary);
 router.get("/me/selling", auth, hasShop, controller.getSellingOrders);
 router.get(
   "/me/selling/summary",
@@ -200,6 +247,13 @@ router.post(
   ...orderDispatchBill,
   validate(dispatchActionSchema),
   controller.dispatch,
+);
+router.post(
+  "/:id/actions/dispatch-courier",
+  auth,
+  hasShop,
+  validate(courierDispatchActionSchema),
+  controller.dispatchCourier,
 );
 router.post(
   "/:id/actions/confirm-receipt",

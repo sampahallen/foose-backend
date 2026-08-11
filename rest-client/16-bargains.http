@@ -1,0 +1,109 @@
+@baseUrl = http://localhost:8000/api
+@buyerToken = paste_buyer_access_token_here
+@sellerToken = paste_seller_access_token_here
+@listingId = paste_bargainable_listing_id_here
+@bargainId = paste_bargain_id_from_the_first_response_here
+
+### Buyer opens a bargain (listing must have bargainingAllowed: true)
+# Amounts are integer pesewas and must be below the listed price.
+POST {{baseUrl}}/bargains
+Authorization: Bearer {{buyerToken}}
+Content-Type: application/json
+
+{
+  "listingId": "{{listingId}}",
+  "amount": 7000,
+  "note": "Can you do 70?"
+}
+
+### A second open bargain on the same listing is rejected (409)
+POST {{baseUrl}}/bargains
+Authorization: Bearer {{buyerToken}}
+Content-Type: application/json
+
+{
+  "listingId": "{{listingId}}",
+  "amount": 6500
+}
+
+### Buyer checks their own bargain for a listing (powers the "your price" badge)
+GET {{baseUrl}}/bargains/listing/{{listingId}}/mine
+Authorization: Bearer {{buyerToken}}
+
+### Seller counters
+POST {{baseUrl}}/bargains/{{bargainId}}/counter
+Authorization: Bearer {{sellerToken}}
+Content-Type: application/json
+
+{
+  "amount": 8500,
+  "note": "Best I can do is 85."
+}
+
+### The buyer countering out of turn is rejected (409)
+POST {{baseUrl}}/bargains/{{bargainId}}/counter
+Authorization: Bearer {{sellerToken}}
+Content-Type: application/json
+
+{
+  "amount": 8000
+}
+
+### Buyer counters back
+POST {{baseUrl}}/bargains/{{bargainId}}/counter
+Authorization: Bearer {{buyerToken}}
+Content-Type: application/json
+
+{
+  "amount": 8000
+}
+
+### Seller accepts the standing offer
+POST {{baseUrl}}/bargains/{{bargainId}}/accept
+Authorization: Bearer {{sellerToken}}
+Content-Type: application/json
+
+{}
+
+### Either side can drop out at any time
+POST {{baseUrl}}/bargains/{{bargainId}}/cancel
+Authorization: Bearer {{buyerToken}}
+Content-Type: application/json
+
+{}
+
+### Seller declines instead of countering
+POST {{baseUrl}}/bargains/{{bargainId}}/decline
+Authorization: Bearer {{sellerToken}}
+Content-Type: application/json
+
+{}
+
+### Buyer's bargains
+GET {{baseUrl}}/bargains?role=buyer&status=accepted&limit=20
+Authorization: Bearer {{buyerToken}}
+
+### Seller's inbound bargains
+GET {{baseUrl}}/bargains?role=seller&limit=20
+Authorization: Bearer {{sellerToken}}
+
+### Full negotiation history (participants only)
+GET {{baseUrl}}/bargains/{{bargainId}}
+Authorization: Bearer {{buyerToken}}
+
+### Checkout after an accepted bargain
+# The body carries no price: the server resolves the agreed amount from the
+# bargain and spends it. Verify Order.items[0].price equals the agreed price and
+# Order.items[0].listPrice equals the original listing price.
+POST {{baseUrl}}/orders
+Authorization: Bearer {{buyerToken}}
+Idempotency-Key: bargain-checkout-001
+Content-Type: application/json
+
+{
+  "deliveryByShop": {
+    "paste_shop_id_here": { "method": "shop_pickup" }
+  },
+  "items": [{ "listingId": "{{listingId}}", "quantity": 1 }],
+  "paymentMethod": "cash_on_pickup"
+}

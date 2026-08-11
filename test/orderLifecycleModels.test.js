@@ -84,10 +84,11 @@ test("Order exposes a per-shop checkout idempotency index", () => {
   assert.equal(anchorIndex[1].partialFilterExpression.checkoutAnchor, true);
 });
 
-test("Order transit schema uses driver phone and optional parcel number only", () => {
+test("Order transit schema records driver phone, bus number, and the transit amount", () => {
   assert.ok(Order.schema.path("delivery.transit.driverPhone"));
-  assert.ok(Order.schema.path("delivery.transit.parcelNumber"));
-  assert.equal(Order.schema.path("delivery.transit.busNumber"), undefined);
+  assert.ok(Order.schema.path("delivery.transit.busNumber"));
+  assert.ok(Order.schema.path("delivery.transit.amount"));
+  assert.equal(Order.schema.path("delivery.transit.parcelNumber"), undefined);
   assert.equal(Order.schema.path("delivery.transit.lastStopLocation"), undefined);
 });
 

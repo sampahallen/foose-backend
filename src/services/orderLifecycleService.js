@@ -1549,12 +1549,13 @@ const confirmCollection = async ({
 };
 
 const dispatchOrder = ({
+  amount,
   billImage,
+  busNumber,
   driverPhone,
   idempotencyKey,
   now = new Date(),
   orderId,
-  parcelNumber,
   userId,
 }) =>
   simpleTransition({
@@ -1576,9 +1577,10 @@ const dispatchOrder = ({
         autoReleaseAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
         deliveryReleaseAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
         "delivery.transit": {
+          amount,
           billImage,
+          busNumber: busNumber || "",
           driverPhone,
-          parcelNumber: parcelNumber || "",
         },
         fulfillmentStatus: "in_transit",
         sellerAction: "shipped",
@@ -1633,6 +1635,45 @@ const dispatchOrder = ({
       }
       throw error;
     });
+
+// Same shape as dispatchOrder above, for the two door-to-door courier
+// methods. No waybill/busNumber/driverPhone here - the seller just pastes
+// the tracking link they got from the Bolt/Yango/ShaQ app.
+const dispatchCourierOrder = ({
+  idempotencyKey,
+  now = new Date(),
+  orderId,
+  trackingLink,
+  userId,
+}) =>
+  simpleTransition({
+    action: "dispatchCourier",
+    actorId: userId,
+    eventMessage: "Seller booked the courier and marked the parcel sent.",
+    eventType: "delivery_dispatched_courier",
+    filter: {
+      _id: orderId,
+      activeReportId: null,
+      "delivery.method": { $in: ["intra_city_courier", "inter_city_courier"] },
+      fulfillmentStatus: "awaiting_seller",
+      settlementStatus: "held",
+    },
+    idempotencyKey,
+    role: "seller",
+    update: {
+      $set: {
+        autoReleaseAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
+        deliveryReleaseAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
+        "delivery.trackingLink": trackingLink,
+        fulfillmentStatus: "in_transit",
+        sellerAction: "shipped",
+        sellerActionAt: now,
+        sentAt: now,
+        status: "shipped",
+        workflowDeadlineAt: new Date(now.getTime() + DELIVERY_RELEASE_WINDOW_MS),
+      },
+    },
+  });
 
 const confirmReceipt = async ({
   idempotencyKey,
@@ -2102,6 +2143,13 @@ const cancelExpiredPaymentReservation = async ({
       syncRestoredInventory(order),
     ]),
   );
+  // The reservation lapsed rather than the deal falling through, so the buyer
+  // keeps the price they negotiated. Best-effort and outside the transaction:
+  // the restored stock must stand even if this does not.
+  const { releaseBargainsForOrder } = require("./bargainService");
+  for (const order of restoredOrders) {
+    await releaseBargainsForOrder(order._id).catch(() => undefined);
+  }
   return restoredOrders;
 };
 
@@ -2421,6 +2469,7 @@ module.exports = {
   compensateCancelledPayment,
   confirmCollection,
   confirmReceipt,
+  dispatchCourierOrder,
   dispatchOrder,
   deliverLifecycleNotificationEmail,
   flagPaymentValidationAttention,

@@ -99,7 +99,9 @@ const listingSchema = new Schema(
         "white",
         "yellow",
       ],
-      default: "multi",
+      default: function () {
+        return this.type === "wholesale" ? undefined : "multi";
+      },
       index: true,
     },
     attributes: {
@@ -117,7 +119,7 @@ const listingSchema = new Schema(
       },
       baleGrade: {
         type: String,
-        enum: ["premium", "grade-a", "grade-b", "mixed"],
+        enum: ["premium", "grade-a", "grade-b", "mixed", "wiper"],
       },
     },
     type: {
@@ -142,6 +144,21 @@ const listingSchema = new Schema(
     },
     bulkMinQty: Number,
     bulkWeight: String,
+    // Sellers must choose this explicitly when posting. Existing listings were
+    // backfilled to false by scripts/backfillBargainingAllowed.js.
+    bargainingAllowed: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    // The seller's private floor, in pesewas. `select: false` keeps it out of
+    // the cached public listing payload; buyers only ever learn that an offer
+    // fell under it, never the number.
+    minAcceptablePrice: {
+      type: Number,
+      min: 0,
+      select: false,
+    },
     volumeDiscounts: [
       {
         minQty: Number,

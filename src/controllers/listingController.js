@@ -12,6 +12,7 @@ const {
   syncListingSearchDocument,
 } = require("../services/searchIndexService");
 const { ensureShopLocationFromOwner, listingLocationClause } = require("../services/locationService");
+const { closeBargainsForListing } = require("../services/bargainService");
 const {
   applyCategoryFilter,
   isSupportedCategory,
@@ -52,29 +53,54 @@ const parseImageList = (value) => {
 const normalizeListingTypeFields = (input, currentListing) => {
   const type = input.type || currentListing?.type;
 
+  // A listing - retail or wholesale - is sold as a single unit. A bale is one
+  // bundle, not a bulk SKU with its own stock count, so there is no more
+  // per-listing quantity or minimum order quantity to collect.
+  input.quantity = 1;
+  input.bulkMinQty = undefined;
+
   if (type === "retail") {
-    input.quantity = 1;
-    input.bulkMinQty = undefined;
     input.bulkWeight = undefined;
     input.volumeDiscounts = [];
     return input;
   }
 
   if (type === "wholesale") {
-    const quantity = input.quantity ?? currentListing?.quantity;
-    const bulkMinQty = input.bulkMinQty ?? currentListing?.bulkMinQty;
-
-    if (!quantity || quantity < 1) {
-      throw httpError(422, "Wholesale listings require a total available quantity");
+    const bulkWeight = input.bulkWeight ?? currentListing?.bulkWeight;
+    if (!bulkWeight || !String(bulkWeight).trim()) {
+      throw httpError(422, "Wholesale listings require a weight");
     }
 
-    if (!bulkMinQty || bulkMinQty < 1) {
-      throw httpError(422, "Wholesale listings require a minimum order quantity");
+    const baleGrade = input.attributes?.baleGrade ?? currentListing?.attributes?.baleGrade;
+    if (!baleGrade) {
+      throw httpError(422, "Wholesale listings require a bale grade");
     }
 
-    if (bulkMinQty > quantity) {
-      throw httpError(422, "Minimum order quantity cannot exceed total available quantity");
-    }
+    // Tiered bulk pricing no longer applies now that every bale is one unit.
+    input.volumeDiscounts = [];
+  }
+
+  return input;
+};
+
+const normalizeBargainFields = (input, currentListing) => {
+  const bargainingAllowed = input.bargainingAllowed ?? currentListing?.bargainingAllowed ?? false;
+
+  if (!bargainingAllowed) {
+    // No point keeping a floor on a listing nobody can haggle over.
+    input.minAcceptablePrice = undefined;
+    return input;
+  }
+
+  const minimum = input.minAcceptablePrice ?? currentListing?.minAcceptablePrice;
+  if (minimum === undefined || minimum === null || minimum === 0) {
+    if (input.minAcceptablePrice === 0) input.minAcceptablePrice = undefined;
+    return input;
+  }
+
+  const price = input.price ?? currentListing?.price;
+  if (price !== undefined && Number(minimum) > Number(price)) {
+    throw httpError(422, "The lowest price you will accept cannot be above the listed price");
   }
 
   return input;
@@ -85,7 +111,7 @@ const listingInput = (req, currentListing) => {
   delete input.promotionTags;
   delete input.promotionExpiresAt;
   delete input.promotionReferences;
-  ["price", "quantity", "bulkMinQty"].forEach((field) => {
+  ["price", "quantity", "bulkMinQty", "minAcceptablePrice"].forEach((field) => {
     if (input[field] !== undefined && input[field] !== "") {
       input[field] = Number(input[field]);
     }
@@ -113,6 +139,7 @@ const listingInput = (req, currentListing) => {
   }
 
   normalizeListingTypeFields(input, currentListing);
+  normalizeBargainFields(input, currentListing);
 
   const rawCategory = String(input.category ?? currentListing?.category ?? "").trim();
   const rawSubcategory = String(
@@ -283,7 +310,14 @@ exports.getMyListings = asyncHandler(async (req, res) => {
   }
 
   const [listings, total] = await Promise.all([
-    Listing.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    // The seller owns these rows, so their private bargaining floor comes back
+    // with them for the edit form.
+    Listing.find(filter)
+      .select("+minAcceptablePrice")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
     Listing.countDocuments(filter),
   ]);
 
@@ -330,7 +364,7 @@ exports.updateListing = asyncHandler(async (req, res) => {
     _id: req.params.id,
     shopId: shop?._id,
     status: { $ne: "removed" },
-  });
+  }).select("+minAcceptablePrice");
 
   if (!listing) {
     throw httpError(404, "Listing not found");
@@ -342,6 +376,14 @@ exports.updateListing = asyncHandler(async (req, res) => {
     listing.location = mergeLocation(listing.location, resolvedLocation.location);
   }
   await listing.save();
+  // A listing that leaves the marketplace cannot honour an agreed price, so any
+  // live negotiation on it is closed out with a card in the thread.
+  if (previousListing.status === "active" && listing.status !== "active") {
+    await closeBargainsForListing({
+      listingId: listing._id,
+      reason: "listing_unavailable",
+    });
+  }
   await syncListingHashtags(previousListing, listing);
   await runSearchSync(`listing:${listing._id}:update`, () =>
     syncListingSearchDocument(listing._id));
@@ -370,6 +412,10 @@ exports.deleteListing = asyncHandler(async (req, res) => {
   const previousListing = listing.toObject();
   listing.status = "removed";
   await listing.save();
+  await closeBargainsForListing({
+    listingId: listing._id,
+    reason: "listing_unavailable",
+  });
   await syncListingHashtags(previousListing, listing);
   await runSearchSync(`listing:${listing._id}:remove`, () =>
     syncListingSearchDocument(listing._id));
@@ -382,3 +428,5 @@ exports.deleteListing = asyncHandler(async (req, res) => {
 
   return success(res, { listing }, "Listing removed");
 });
+
+exports.normalizeListingTypeFields = normalizeListingTypeFields;

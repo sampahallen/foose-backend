@@ -76,6 +76,20 @@ const emailChangeLimiter = createLimiter({
   },
 });
 
+// Bargaining writes are cheap per call but easy to spam across a listing feed,
+// so they are capped per account rather than per IP.
+const bargainLimiter = createLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 120,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many bargaining requests. Please slow down and try again shortly.",
+  },
+});
+
 const promotionMetricLimiter = createLimiter({
   windowMs: 60 * 1000,
   limit: 120,
@@ -86,6 +100,7 @@ const promotionMetricLimiter = createLimiter({
 
 module.exports = {
   authLimiter,
+  bargainLimiter,
   emailChangeLimiter,
   generalLimiter,
   kycLimiter,

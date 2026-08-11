@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { BARGAIN_ACTIONS, BARGAIN_ACTORS } = require("../constants/bargain");
 const { Schema } = mongoose;
 
 const messageSchema = new Schema(
@@ -65,8 +66,30 @@ const messageSchema = new Schema(
     ],
     type: {
       type: String,
-      enum: ["text", "image", "video", "mixed"],
+      enum: ["text", "image", "video", "mixed", "offer"],
       default: "text",
+    },
+    bargainId: {
+      type: Schema.Types.ObjectId,
+      ref: "Bargain",
+      index: true,
+      sparse: true,
+    },
+    // Immutable snapshot of the round this message represents. The live
+    // negotiation state lives on the Bargain; this is what keeps older cards in
+    // the thread reading correctly after the bargain moves on.
+    offer: {
+      action: {
+        type: String,
+        enum: BARGAIN_ACTIONS,
+      },
+      actor: {
+        type: String,
+        enum: BARGAIN_ACTORS,
+      },
+      amount: Number,
+      previousAmount: Number,
+      round: Number,
     },
     isRead: {
       type: Boolean,

@@ -14,6 +14,7 @@
     "search:rebuild": "node scripts/rebuildSearch.js",
     "locations:backfill": "node scripts/backfillLocations.js",
     "listings:taxonomy:migrate": "node scripts/migrateListingTaxonomy.js",
+    "listings:bargaining:backfill": "node scripts/backfillBargainingAllowed.js",
     "orders:lifecycle:migrate": "node scripts/migrateOrderLifecycle.js",
     "delivery:methods:migrate": "node scripts/migrateDeliveryMethods.js",
     "test": "node --test"

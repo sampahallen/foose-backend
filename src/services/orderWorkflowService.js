@@ -2,6 +2,7 @@ const {
   FULFILLMENT_STATUSES,
   ORDER_SETTLEMENT_STATUSES,
 } = require("../constants/orderLifecycle");
+const { COURIER_METHODS } = require("../constants/delivery");
 
 const asDate = (value) => {
   if (!value) return null;
@@ -121,7 +122,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
   const isSeller = ownerIdFor(order) === String(userId || "");
   const reportActive = hasActiveReport(order);
   const method = order?.delivery?.method || "station_pickup";
-  const isTransitMethod = ["station_pickup", "airport_to_airport"].includes(method);
+  const isTransitMethod = ["station_pickup", "airport_to_airport", ...COURIER_METHODS].includes(method);
   const allowedActions = [];
 
   if (!reportActive) {
@@ -171,7 +172,7 @@ const workflowFor = (order, userId, nowInput = new Date()) => {
       settlementStatus === "held" &&
       fulfillmentStatus === "awaiting_seller"
     ) {
-      allowedActions.push("dispatch");
+      allowedActions.push(COURIER_METHODS.includes(method) ? "dispatchCourier" : "dispatch");
     }
 
     if (

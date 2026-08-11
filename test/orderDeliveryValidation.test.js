@@ -27,6 +27,81 @@ test("station pickup rejects an order without a destination", async () => {
   assert.equal(error.message, "Destination details are required for this delivery method");
 });
 
+test("intra-city courier rejects an order without a delivery address", async () => {
+  const error = await invokeForError(orderController.placeOrder, {
+    body: {
+      deliveryByShop: {
+        "shop-1": {
+          destination: {
+            recipientName: "Ama",
+            recipientPhone: "0240000000",
+            region: "Greater Accra",
+            town: "Accra",
+          },
+          method: "intra_city_courier",
+          provider: "bolt_send",
+        },
+      },
+      items: [{ listingId: "listing-1", quantity: 1 }],
+      paymentMethod: "paystack",
+    },
+    user: { id: "buyer-1" },
+  });
+
+  assert.equal(error.statusCode, 422);
+  assert.equal(error.message, "Delivery address is required for door-to-door courier");
+});
+
+test("inter-city courier rejects an order without a chosen provider", async () => {
+  const error = await invokeForError(orderController.placeOrder, {
+    body: {
+      deliveryByShop: {
+        "shop-1": {
+          destination: {
+            deliveryAddress: "12 Ring Road",
+            recipientName: "Ama",
+            recipientPhone: "0240000000",
+            region: "Ashanti",
+            town: "Kumasi",
+          },
+          method: "inter_city_courier",
+        },
+      },
+      items: [{ listingId: "listing-1", quantity: 1 }],
+      paymentMethod: "paystack",
+    },
+    user: { id: "buyer-1" },
+  });
+
+  assert.equal(error.statusCode, 422);
+  assert.equal(error.message, "Choose a delivery provider");
+});
+
+test("checkoutRequestHashFor changes when the chosen courier provider changes", () => {
+  const base = {
+    deliveryByShop: {
+      "shop-1": {
+        destination: { region: "Greater Accra", town: "Accra" },
+        method: "intra_city_courier",
+        provider: "bolt_send",
+      },
+    },
+    items: [{ listingId: "listing-1", quantity: 1 }],
+    paymentMethod: "paystack",
+  };
+  const withYango = {
+    ...base,
+    deliveryByShop: {
+      "shop-1": { ...base.deliveryByShop["shop-1"], provider: "yango_delivery" },
+    },
+  };
+
+  assert.notEqual(
+    orderController.checkoutRequestHashFor(base),
+    orderController.checkoutRequestHashFor(withYango),
+  );
+});
+
 test("a seller cannot create an order for their own listing", async () => {
   const originalFind = Listing.find;
   const originalOrderFind = Order.find;

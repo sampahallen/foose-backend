@@ -23,6 +23,7 @@ const {
 const { createNotification } = require("../services/notificationService");
 const { sendSellerOrderEmail } = require("../services/emailService");
 const { awardPurchaseForOrder } = require("../services/recommendationService");
+const { releaseBargainsForOrder } = require("../services/bargainService");
 const { runSearchSync, syncListingSearchDocument } = require("../services/searchIndexService");
 const {
   createPromotionOrder,
@@ -405,6 +406,11 @@ exports.cancelPayment = asyncHandler(async (req, res) => {
     "listings:featured",
     ...cancelledOrders.map((order) => `shop:${order.shopId}:listings`),
   );
+
+  // Cancelling the checkout hands the buyer's agreed price back to them.
+  for (const order of cancelledOrders) {
+    await releaseBargainsForOrder(order._id).catch(() => undefined);
+  }
 
   const currentOrders = cancelledOrders.length
     ? cancelledOrders
