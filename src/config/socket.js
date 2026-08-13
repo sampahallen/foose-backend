@@ -76,7 +76,17 @@ const attachRedisAdapter = async (server) => {
 const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || "*",
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true); // native app clients don't send an origin
+        if (origin === (process.env.CLIENT_URL || "http://localhost:5173")) {
+          return callback(null, true);
+        }
+        // Dev convenience: any localhost port covers Vite and Expo web.
+        if (process.env.NODE_ENV !== "production" && /^https?:\/\/localhost:\d+$/.test(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error("Not allowed by CORS"));
+      },
       methods: ["GET", "POST"],
     },
   });

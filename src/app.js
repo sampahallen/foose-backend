@@ -29,9 +29,23 @@ const { deletePrivateObject } = require("./config/s3");
 
 const app = express();
 
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // non-browser clients (native app, curl, server-to-server)
+  if (origin === (process.env.CLIENT_URL || "http://localhost:5173")) return true;
+  // Dev convenience: any localhost port covers Vite (frontend/admin-frontend) and Expo web,
+  // whose port varies by SDK version and isn't worth pinning in CLIENT_URL.
+  if (process.env.NODE_ENV !== "production" && /^https?:\/\/localhost:\d+$/.test(origin)) {
+    return true;
+  }
+  return false;
+};
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || true,
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   }),
 );
