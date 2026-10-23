@@ -7,6 +7,7 @@ const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const { hasShop } = require("../middleware/roleMiddleware");
 const validate = require("../middleware/validateMiddleware");
 const { listingImages } = require("../middleware/uploadMiddleware");
+const { COLOR_VALUES } = require("../utils/listingColors");
 
 const router = express.Router();
 
@@ -26,33 +27,13 @@ const listingBody = z.object({
   size: z.string().optional(),
   gender: z.enum(["men", "women", "unisex", "kids"]).optional(),
   condition: z.enum(["excellent", "great", "good", "fair", "poor"]).optional(),
-  color: z.enum([
-    "beige",
-    "black",
-    "blue",
-    "brown",
-    "burgundy",
-    "cream",
-    "cyan",
-    "gold",
-    "green",
-    "gray",
-    "ivory",
-    "khaki",
-    "multi",
-    "navy",
-    "olive",
-    "orange",
-    "pink",
-    "purple",
-    "red",
-    "silver",
-    "teal",
-    "turquoise",
-    "violet",
-    "white",
-    "yellow",
-  ]).optional(),
+  color: z.enum(COLOR_VALUES).optional(),
+  colors: z.preprocess((value) => {
+    if (typeof value !== "string") return value;
+    try { return JSON.parse(value); } catch { return value; }
+  }, z.array(z.enum(COLOR_VALUES)).min(1).max(5)
+    .refine((values) => new Set(values).size === values.length, "Choose distinct colors")
+    .refine((values) => !values.includes("multi") || values.length === 1, "Multi must be selected alone")).optional(),
   attributes: z.any().optional(),
   type: z.enum(["retail", "wholesale"]).optional(),
   price: z.coerce.number().int().nonnegative().optional(),

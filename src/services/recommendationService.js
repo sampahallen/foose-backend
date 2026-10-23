@@ -14,6 +14,7 @@ const {
   SUGGESTED_FEED,
 } = require("../constants/recommendations");
 const { normalizeHashtags } = require("../utils/hashtags");
+const { appendColorFilter, effectiveListingColors } = require("../utils/listingColors");
 const { appendQueryClause, effectiveListingLocation, locationLabel } = require("../utils/location");
 const { applyCategoryFilter } = require("../utils/listingTaxonomy");
 const { listingLocationClause } = require("./locationService");
@@ -61,7 +62,7 @@ const listingAffinities = (listing) => {
   return {
     category: uniqueValues([listing?.category]),
     subcategory: uniqueValues([listing?.subcategory]),
-    color: uniqueValues([listing?.color]),
+    color: uniqueValues(effectiveListingColors(listing)),
     digishopId: uniqueValues([idValue(listing?.shopId)]),
     hashtags: uniqueValues(normalizeHashtags(listing?.hashtags)),
     location: uniqueValues([locationLabel(effectiveListingLocation(listing))]),
@@ -440,9 +441,10 @@ const listingFilter = async (query, userId) => {
   }
 
   applyCategoryFilter(filter, query.category, query.subcategory);
-  ["type", "condition", "color", "gender", "size", "brand"].forEach((field) => {
+  ["type", "condition", "gender", "size", "brand"].forEach((field) => {
     if (query[field]) filter[field] = query[field];
   });
+  appendColorFilter(filter, query.color);
   ["material", "fit", "pattern", "baleGrade"].forEach((field) => {
     if (query[field]) filter[`attributes.${field}`] = query[field];
   });

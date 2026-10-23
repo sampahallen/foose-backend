@@ -117,7 +117,7 @@ test("listing scores combine item affinities with Finspo hashtags and creators",
   const profile = {
     itemAffinities: {
       category: { tops: 10 },
-      color: { red: 5 },
+      color: { red: 5, blue: 9 },
       digishopId: { "shop-1": 7 },
       hashtags: { streetwear: 20 },
       location: { "accra,_greater_accra": 4 },
@@ -141,6 +141,7 @@ test("listing scores combine item affinities with Finspo hashtags and creators",
   };
 
   assert.equal(scoreListing(profile, listing), 87);
+  assert.equal(scoreListing(profile, { ...listing, colors: ["red", "blue"] }), 96);
 });
 
 test("Finspo scores combine creator, Finspo tag, and marketplace tag affinities", () => {

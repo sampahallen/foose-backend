@@ -8,6 +8,7 @@ const SearchDocument = require("../models/SearchDocument");
 const User = require("../models/User");
 const httpError = require("../utils/httpError");
 const { normalizeHashtag } = require("../utils/hashtags");
+const { appendColorFilter } = require("../utils/listingColors");
 const { appendQueryClause } = require("../utils/location");
 const { applyCategoryFilter } = require("../utils/listingTaxonomy");
 const { listingLocationClause } = require("./locationService");
@@ -297,7 +298,7 @@ const hydrateItems = async (ids, listingFilter = {}, excludeOwnerId) => {
     visibility: { $ne: "event" },
     ...listingFilter,
   }).select(
-    "_id shopId location title description hashtags category subcategory brand size gender condition color attributes type price currency quantity bulkMinQty bulkWeight volumeDiscounts images promotionTags promotionExpiresAt visibility status views createdAt updatedAt",
+    "_id shopId location title description hashtags category subcategory brand size gender condition color colors attributes type price currency quantity bulkMinQty bulkWeight volumeDiscounts images promotionTags promotionExpiresAt visibility status views createdAt updatedAt",
   ).lean();
   const shops = await DigiShop.find({
     _id: { $in: listings.map((listing) => listing.shopId) },
@@ -714,9 +715,10 @@ const buildBrowseListingFilter = async ({
 } = {}) => {
   const filter = {};
   applyCategoryFilter(filter, category, subcategory);
-  Object.entries({ brand, color, condition, gender, size, type }).forEach(([field, value]) => {
+  Object.entries({ brand, condition, gender, size, type }).forEach(([field, value]) => {
     if (value !== undefined && value !== "") filter[field] = value;
   });
+  appendColorFilter(filter, color);
   Object.entries({ baleGrade, fit, material, pattern }).forEach(([field, value]) => {
     if (value !== undefined && value !== "") filter[`attributes.${field}`] = value;
   });

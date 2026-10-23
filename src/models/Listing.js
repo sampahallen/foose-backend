@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { MAX_HASHTAGS, normalizeHashtags } = require("../utils/hashtags");
+const { COLOR_VALUES } = require("../utils/listingColors");
 const { Schema } = mongoose;
 
 const listingSchema = new Schema(
@@ -72,35 +73,18 @@ const listingSchema = new Schema(
     },
     color: {
       type: String,
-      enum: [
-        "beige",
-        "black",
-        "blue",
-        "brown",
-        "burgundy",
-        "cream",
-        "cyan",
-        "gold",
-        "green",
-        "gray",
-        "ivory",
-        "khaki",
-        "multi",
-        "navy",
-        "olive",
-        "orange",
-        "pink",
-        "purple",
-        "red",
-        "silver",
-        "teal",
-        "turquoise",
-        "violet",
-        "white",
-        "yellow",
-      ],
+      enum: COLOR_VALUES,
       default: function () {
         return this.type === "wholesale" ? undefined : "multi";
+      },
+      index: true,
+    },
+    colors: {
+      type: [{ type: String, enum: COLOR_VALUES }],
+      default: undefined,
+      validate: {
+        validator: (values) => !values || (values.length >= 1 && values.length <= 5 && new Set(values).size === values.length && (!values.includes("multi") || values.length === 1)),
+        message: "Choose one to five distinct colors; Multi must be selected alone",
       },
       index: true,
     },

@@ -79,13 +79,13 @@ test("Browse listing filters preserve every marketplace constraint including leg
     assert.equal(filter.brand, "Nike");
     assert.equal(filter.category, "Footwear");
     assert.equal(filter.subcategory, "Sneakers");
-    assert.equal(filter.color, "blue");
+    assert.deepEqual(filter.$and[0], { $or: [{ colors: "blue" }, { color: "blue" }] });
     assert.equal(filter.condition, "great");
     assert.equal(filter.gender, "unisex");
     assert.equal(filter.size, "UK 8");
     assert.equal(filter.type, "retail");
-    assert.equal(filter.$and.length, 1);
-    assert.ok(filter.$and[0].$or.some((clause) => clause.$and?.[1]?.shopId?.$in?.includes(legacyShopId)));
+    assert.equal(filter.$and.length, 2);
+    assert.ok(filter.$and[1].$or.some((clause) => clause.$and?.[1]?.shopId?.$in?.includes(legacyShopId)));
   } finally {
     DigiShop.find = originalShopFind;
   }

@@ -185,7 +185,7 @@ test("seller listing endpoint builds an escaped case-insensitive search across k
     assert.equal(receivedCalls.filter.shopId, "shop-5");
     assert.equal(receivedCalls.filter.status, "active");
     const orFields = receivedCalls.filter.$or.map((clause) => Object.keys(clause)[0]);
-    assert.deepEqual(orFields, ["title", "brand", "category", "subcategory", "size", "gender", "color"]);
+    assert.deepEqual(orFields, ["title", "brand", "category", "subcategory", "size", "gender", "color", "colors"]);
     const titlePattern = receivedCalls.filter.$or[0].title;
     assert.ok(titlePattern instanceof RegExp);
     assert.equal(titlePattern.source, "denim \\(relaxed\\)");

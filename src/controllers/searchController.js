@@ -7,6 +7,7 @@ const ShadowProfile = require("../models/ShadowProfile");
 const asyncHandler = require("../utils/asyncHandler");
 const { success } = require("../utils/apiResponse");
 const { withCache } = require("../utils/cache");
+const { appendColorFilter } = require("../utils/listingColors");
 const { appendQueryClause, incompleteLocationQuery, locationLabel } = require("../utils/location");
 const { applyCategoryFilter } = require("../utils/listingTaxonomy");
 const { listingLocationClause } = require("../services/locationService");
@@ -130,11 +131,12 @@ const listingSearchData = async (query, baseFilter = {}, userId) => {
   }
 
   applyCategoryFilter(filter, query.category, query.subcategory);
-  ["type", "condition", "color", "gender", "size", "brand"].forEach(
+  ["type", "condition", "gender", "size", "brand"].forEach(
     (field) => {
       if (query[field]) filter[field] = query[field];
     },
   );
+  appendColorFilter(filter, query.color);
   ["material", "fit", "pattern", "baleGrade"].forEach((field) => {
     if (query[field]) filter[`attributes.${field}`] = query[field];
   });

@@ -5,6 +5,7 @@ const httpError = require("../utils/httpError");
 const { success } = require("../utils/apiResponse");
 const { withCache, invalidate, invalidatePattern } = require("../utils/cache");
 const { normalizeHashtags } = require("../utils/hashtags");
+const { appendColorFilter, normalizeListingColorFields } = require("../utils/listingColors");
 const { hasCompleteLocation, mergeLocation } = require("../utils/location");
 const { syncListingHashtags } = require("../services/hashtagService");
 const {
@@ -29,7 +30,7 @@ const pageOptions = (query) => {
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const MY_LISTINGS_SEARCH_FIELDS = ["title", "brand", "category", "subcategory", "size", "gender", "color"];
+const MY_LISTINGS_SEARCH_FIELDS = ["title", "brand", "category", "subcategory", "size", "gender", "color", "colors"];
 
 const parseVolumeDiscounts = (value) => {
   if (!value) return undefined;
@@ -111,6 +112,7 @@ const listingInput = (req, currentListing) => {
   delete input.promotionTags;
   delete input.promotionExpiresAt;
   delete input.promotionReferences;
+  normalizeListingColorFields(input, currentListing);
   ["price", "quantity", "bulkMinQty", "minAcceptablePrice"].forEach((field) => {
     if (input[field] !== undefined && input[field] !== "") {
       input[field] = Number(input[field]);
@@ -198,15 +200,16 @@ exports.listListings = asyncHandler(async (req, res) => {
   }
 
   applyCategoryFilter(filter, req.query.category, req.query.subcategory);
-  ["type", "gender", "condition", "color", "size", "brand"].forEach((field) => {
+  ["type", "gender", "condition", "size", "brand"].forEach((field) => {
     if (req.query[field]) filter[field] = req.query[field];
   });
+  appendColorFilter(filter, req.query.color);
   ["material", "fit", "pattern", "baleGrade"].forEach((field) => {
     if (req.query[field]) filter[`attributes.${field}`] = req.query[field];
   });
   if (req.query.location) {
     const locationClause = await listingLocationClause(req.query.location);
-    if (locationClause) filter.$and = [locationClause];
+    if (locationClause) filter.$and = [...(filter.$and || []), locationClause];
   }
 
   const [results, total] = await Promise.all([
